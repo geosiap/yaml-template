@@ -1,0 +1,15 @@
+name: "Deploy application using ansible"
+description: "Faz o deploy da aplicação usando ansible"
+
+inputs:
+  client_name:
+    description: "Nome do cliente situado no hosts do ansible que será rodado o playbook"
+  role_name:
+    description: "Nome da role do projeto"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run ansible
+      run: sudo ansible-playbook -i inventories/hosts-all -l ${{ inputs.client_name }} projects.yml -t ${{ inputs.role_name }} --vault-password-file vault_secret.sh
+      working-directory: /srv/ansible/ansible-production
