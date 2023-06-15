@@ -8,6 +8,12 @@ inputs:
   project_name:
     description: "Project Name"
     required: true
+  docker_login:
+    description: "Docker username"
+    required: true
+  docker_password:
+    description: "Docker password"
+    required: true
   tag:
     description: "Tag da imagem. Default: latest"
 
@@ -20,8 +26,8 @@ runs:
     - name: Docker Login
       uses: docker/login-action@v2.1.0
       with:
-        username: ${{ secrets.DOCKER_LOGIN }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{inputs.docker_login}}
+        password: ${{inputs.docker_password}}
         logout: true
 
     - name: Set the tag
@@ -37,26 +43,19 @@ runs:
           echo "final_tag=-${{inputs.tags}}" >> $GITHUB_ENV
         fi
 
+    - name: Tree
+      shell: bash
+      run: ls -la
+
     - name: Build and push Docker Backend
       uses: docker/build-push-action@v4.0.0
       with:
-        context: Dockerfile.backend
+        context: .
+        file: Dockerfile
         labels: |
           --label source-branch=$GITHUB_REF_NAME
           --label build-commit=$GITHUB_SHA
           --label repository=$GITHUB_REPOSITORY
           --label source-build=github
         tags: ${{inputs.registry_name}}/${{inputs.project_name}}:backend${{env.final_tag}}
-        push: true
-
-    - name: Build and push Docker Frontend
-      uses: docker/build-push-action@v4.0.0
-      with:
-        context: Dockerfile.frontend
-        labels: |
-          --label source-branch=$GITHUB_REF_NAME
-          --label build-commit=$GITHUB_SHA
-          --label repository=$GITHUB_REPOSITORY
-          --label source-build=github
-        tags: ${{inputs.registry_name}}/${{inputs.project_name}}:frontend${{env.final_tag}}
         push: true
