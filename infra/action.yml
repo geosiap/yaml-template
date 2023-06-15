@@ -5,4 +5,5 @@ runs:
   using: "composite"
   steps:
     - name: Connect to VPN
+      shell: bash
       run: sudo sh /srv/scripts/vpn_scripts/connect.sh
