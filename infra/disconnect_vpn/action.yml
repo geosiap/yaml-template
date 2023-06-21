@@ -1,0 +1,9 @@
+name: "Connect to Embras VPN"
+description: "Conecta na VPN da Embras para fazer o deploy das aplicações nos servidores internos"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Disconnect to VPN
+      shell: bash
+      run: sudo sh /srv/scripts/vpn_scripts/disconnect.sh
