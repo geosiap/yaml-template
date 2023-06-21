@@ -18,6 +18,9 @@ inputs:
   docker_back_front: 
     description: "Backend or Frontend"
     required: true
+  git_branch:
+    description: "Branch"
+    required: true
   tag:
     description: "Tag da imagem. Default: latest"
 
@@ -37,15 +40,21 @@ runs:
     - name: Set the tag
       shell: bash
       run: |
-        if [ -z "${{inputs.tags}}" ]
-        then
+        if [ "${{inputs.git_branch}}" =~ production-v[0-9]+$ ]; then
           echo "final_tag=-latest" >> $GITHUB_ENV
-        elif [[ "${{ github.ref_name }}" == "staging" ]]
+        elif [[ "${{inputs.git_branch}}" =~ "staging" ]]
         then
           echo "final_tag=-staging" >> $GITHUB_ENV
         else
           echo "final_tag=-${{inputs.tags}}" >> $GITHUB_ENV
         fi
+        
+    - name: Print final_tag
+      shell: bash
+      run: |
+        echo "---------------------------------------------------------------------------------------"
+        echo $final_tag
+        echo "---------------------------------------------------------------------------------------"
 
     - name: Tree
       shell: bash
