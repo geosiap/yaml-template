@@ -40,7 +40,7 @@ runs:
     - name: Set the tag
       shell: bash
       run: |
-        if [ "${{inputs.git_branch}}" =~ production-v[0-9]+$ ]; then
+        if [[ "${{inputs.git_branch}}" =~ production-v.* ]]; then
           echo "final_tag=-latest" >> $GITHUB_ENV
         elif [[ "${{inputs.git_branch}}" =~ "staging" ]]
         then
@@ -60,15 +60,15 @@ runs:
       shell: bash
       run: ls -la
 
-    - name: Build and push Docker Backend
-      uses: docker/build-push-action@v4.0.0
-      with:
-        context: .
-        file: Dockerfile
-        labels: |
-          --label source-branch=$GITHUB_REF_NAME
-          --label build-commit=$GITHUB_SHA
-          --label repository=$GITHUB_REPOSITORY
-          --label source-build=github
-        tags: ${{inputs.registry_name}}/${{inputs.project_name}}:${{inputs.docker_back_front}}${{env.final_tag}}
-        push: true
+    # - name: Build and push Docker Backend
+    #   uses: docker/build-push-action@v4.0.0
+    #   with:
+    #     context: .
+    #     file: Dockerfile
+    #     labels: |
+    #       --label source-branch=$GITHUB_REF_NAME
+    #       --label build-commit=$GITHUB_SHA
+    #       --label repository=$GITHUB_REPOSITORY
+    #       --label source-build=github
+    #     tags: ${{inputs.registry_name}}/${{inputs.project_name}}:${{inputs.docker_back_front}}${{env.final_tag}}
+    #     push: true
