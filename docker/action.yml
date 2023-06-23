@@ -21,6 +21,9 @@ inputs:
   git_branch:
     description: "Branch"
     required: true
+  dockerfile_name:
+    description: "Dockerfile Name"
+    default: "DockerFile"
   tag:
     description: "Tag da imagem. Default: latest"
 
@@ -72,7 +75,7 @@ runs:
       uses: docker/build-push-action@v4.0.0
       with:
         context: .
-        file: Dockerfile
+        file: ${{ inputs.dockerfile_name }}
         labels: |
           --label source-branch=$GITHUB_REF_NAME
           --label build-commit=$GITHUB_SHA
