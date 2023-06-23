@@ -16,7 +16,7 @@ inputs:
     required: true
   dockerfile_name:
     description: "Dockerfile Name"
-    default: "DockerFile"
+    default: "Dockerfile"
   tag:
     description: "Tag da imagem. Default: latest"
 
