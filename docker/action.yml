@@ -1,4 +1,4 @@
-name: "Build Docker Image Frontend"
+name: "Build Docker Image"
 description: |
   "Faz o build das imagens do Backend e Frontend"
 
@@ -71,7 +71,7 @@ runs:
         echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
         echo "Extract: $EXTRACT_PRODUCTION_STRING"
 
-    - name: Build and push Docker Backend
+    - name: Build and push Docker
       uses: docker/build-push-action@v4.0.0
       with:
         context: .
