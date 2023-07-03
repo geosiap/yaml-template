@@ -49,7 +49,7 @@ runs:
         then
           echo "final_tag=-staging" >> $GITHUB_ENV
         else
-          echo "final_tag=-${{inputs.tags}}" >> $GITHUB_ENV
+          echo "final_tag=-${{inputs.tag}}" >> $GITHUB_ENV
         fi
         
     - name: Print final_tag
