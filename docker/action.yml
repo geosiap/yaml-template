@@ -24,6 +24,10 @@ inputs:
   dockerfile_name:
     description: "Dockerfile Name"
     default: "Dockerfile"
+  release:
+    description: "Release system number"
+  build:
+    description: "Github build number"
   tag:
     description: "Tag da imagem. Default: latest"
 
@@ -76,6 +80,9 @@ runs:
       with:
         context: .
         file: ${{ inputs.dockerfile_name }}
+        build-args: |
+          BUILD=${{ inputs.build }}
+          RELEASE=${{ inputs.release }}
         labels: |
           --label source-branch=$GITHUB_REF_NAME
           --label build-commit=$GITHUB_SHA
