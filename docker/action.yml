@@ -24,8 +24,6 @@ inputs:
   dockerfile_name:
     description: "Dockerfile Name"
     default: "Dockerfile"
-  release:
-    description: "Release system number"
   build:
     description: "Github build number"
   tag:
@@ -34,6 +32,15 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Extract tag last number
+      shell: bash
+      run: |
+          echo "$GITHUB_REF_NAME"
+          EXTRACT_LAST_NUMBER=$(echo "$GITHUB_REF_NAME" | sed 's/.*\.//')
+          echo "EXTRACT_LAST_NUMBER=$EXTRACT_LAST_NUMBER" >> $GITHUB_ENV
+          echo "Extract: $EXTRACT_LAST_NUMBER"
+      if: ${{ inputs.docker_back_front }} == 'backend'
+
     - name: Docker Setup Buildx
       uses: docker/setup-buildx-action@v2.6.0
 
@@ -82,7 +89,7 @@ runs:
         file: ${{ inputs.dockerfile_name }}
         build-args: |
           BUILD=${{ inputs.build }}
-          RELEASE=${{ inputs.release }}
+          RELEASE=$EXTRACT_LAST_NUMBER
         labels: |
           --label source-branch=$GITHUB_REF_NAME
           --label build-commit=$GITHUB_SHA
