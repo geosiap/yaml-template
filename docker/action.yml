@@ -47,20 +47,20 @@ runs:
     - name: Docker Login
       uses: docker/login-action@v2.1.0
       with:
-        username: ${{inputs.docker_login}}
-        password: ${{inputs.docker_password}}
+        username: ${{ inputs.docker_login }}
+        password: ${{ inputs.docker_password }}
         logout: true
 
     - name: Set the tag
       shell: bash
       run: |
-        if [[ "${{inputs.git_branch}}" =~ production-v.* ]]; then
+        if [[ "${{ inputs.git_branch }}" =~ production-v.* ]]; then
           echo "final_tag=-latest" >> $GITHUB_ENV
-        elif [[ "${{inputs.git_branch}}" =~ "staging" ]]
+        elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]
         then
           echo "final_tag=-staging" >> $GITHUB_ENV
         else
-          echo "final_tag=-${{inputs.tag}}" >> $GITHUB_ENV
+          echo "final_tag=-${{ inputs.tag }}" >> $GITHUB_ENV
         fi
         
     - name: Print final_tag
@@ -77,8 +77,8 @@ runs:
     - name: Extract production-v
       shell: bash
       run: |
-        echo "${{inputs.git_branch}}"
-        EXTRACT_PRODUCTION_STRING=$(echo "${{inputs.git_branch}}" | sed 's/.*production-//')
+        echo "${{ inputs.git_branch }}"
+        EXTRACT_PRODUCTION_STRING=$(echo "${ {inputs.git_branch }}" | sed 's/.*production-//')
         echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
         echo "Extract: $EXTRACT_PRODUCTION_STRING"
 
@@ -91,11 +91,11 @@ runs:
           BUILD=${{ inputs.build }}
           RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
         labels: |
-          --label source-branch=$ {{ github.ref_name }}
+          --label source-branch=${{ github.ref_name }}
           --label build-commit=${{ github.sha }}
           --label repository=${{ github.repository }}
           --label source-build=github
         tags: |
-          ${{inputs.registry_name}}/${{inputs.project_name}}:${{inputs.docker_back_front}}${{env.final_tag}},
-          ${{inputs.registry_name}}/${{inputs.project_name}}:${{inputs.docker_back_front}}-${{ env.EXTRACT_PRODUCTION_STRING }}
+          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.final_tag }},
+          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${{ env.EXTRACT_PRODUCTION_STRING }}
         push: true
