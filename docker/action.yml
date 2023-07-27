@@ -89,11 +89,11 @@ runs:
         file: ${{ inputs.dockerfile_name }}
         build-args: |
           BUILD=${{ inputs.build }}
-          RELEASE=$EXTRACT_LAST_NUMBER
+          RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
         labels: |
-          --label source-branch=$GITHUB_REF_NAME
-          --label build-commit=$GITHUB_SHA
-          --label repository=$GITHUB_REPOSITORY
+          --label source-branch=$ {{ github.ref_name }}
+          --label build-commit=${{ github.sha }}
+          --label repository=${{ github.repository }}
           --label source-build=github
         tags: |
           ${{inputs.registry_name}}/${{inputs.project_name}}:${{inputs.docker_back_front}}${{env.final_tag}},
