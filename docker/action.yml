@@ -78,7 +78,7 @@ runs:
       shell: bash
       run: |
         echo "${{ inputs.git_branch }}"
-        EXTRACT_PRODUCTION_STRING=$(echo "${ {inputs.git_branch }}" | sed 's/.*production-//')
+        EXTRACT_PRODUCTION_STRING=$(echo "${{inputs.git_branch }}" | sed 's/.*production-//')
         echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
         echo "Extract: $EXTRACT_PRODUCTION_STRING"
 
