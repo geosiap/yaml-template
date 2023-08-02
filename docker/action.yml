@@ -97,5 +97,5 @@ runs:
           --label source-build=github
         tags: |
           ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.final_tag }},
-          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${{ env.EXTRACT_PRODUCTION_STRING }}
+          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}
         push: true
