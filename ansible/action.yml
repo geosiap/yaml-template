@@ -10,7 +10,7 @@ inputs:
     required: true
   ansible_inventory:
     description: "Inventory file name"
-    required: true
+    required: false
   playbook:
     description: "Playbook name"
     required: true
