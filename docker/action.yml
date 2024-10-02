@@ -64,7 +64,7 @@ runs:
         elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]; then
             echo "final_tag=staging" >> $GITHUB_ENV
         else
-          echo "final_tag=${{ inputs.tag }}" >> $GITHUB_ENV
+          echo "final_tag=${{ inputs.git_branch }}" >> $GITHUB_ENV
         fi
         
     - name: Print variables
