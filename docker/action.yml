@@ -95,7 +95,7 @@ runs:
         build-args: |
           BUILD=${{ inputs.build }}
           RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
-          GIT_BRANCH=${{ inputs.git_branch }}
+          BRANCH_NAME=${{ inputs.branch_name }}
         labels: |
           --label source-branch=${{ github.ref_name }}
           --label build-commit=${{ github.sha }}
