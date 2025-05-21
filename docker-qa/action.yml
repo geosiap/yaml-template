@@ -43,8 +43,8 @@ runs:
           ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-qa-latest
         push: true
 
-  Exemplo de uso:
-  <registry>/<project>:<backend/frontend>-qa-latest
+  # Exemplo de uso:
+  # <registry>/<project>:<backend/frontend>-qa-latest
 
 
 
