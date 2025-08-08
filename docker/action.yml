@@ -59,7 +59,7 @@ runs:
         else
           echo "condition_hifen=" >> $GITHUB_ENV
         fi
-        if [[ "${{ inputs.git_branch }}" =~ production-v.*  || "${{ inputs.git_branch }}" =~ production-pessoas-v.*]]; then
+        if [[ "${{ inputs.git_branch }}" =~ production-v.* || "${{ inputs.git_branch }}" =~ production-pessoas-v.* ]]; then
           echo "final_tag=latest" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]; then
             echo "final_tag=staging" >> $GITHUB_ENV
