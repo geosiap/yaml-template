@@ -24,7 +24,11 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Run ansible
+    - name: Show ansible version
       shell: bash
-      run: sudo ansible-playbook -i ${{ inputs.ansible_inventory }} -l ${{ inputs.client_name }} ${{ inputs.playbook }} -t ${{ inputs.role_name }} --vault-password-file ${{ inputs.vault_file }}
-      working-directory: ${{ inputs.working_directory }}
+      run: ansible --version
+
+    # - name: Run ansible
+    #   shell: bash
+    #   run: sudo ansible-playbook -i ${{ inputs.ansible_inventory }} -l ${{ inputs.client_name }} ${{ inputs.playbook }} -t ${{ inputs.role_name }} --vault-password-file ${{ inputs.vault_file }}
+    #   working-directory: ${{ inputs.working_directory }}

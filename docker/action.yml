@@ -59,7 +59,7 @@ runs:
         else
           echo "condition_hifen=" >> $GITHUB_ENV
         fi
-        if [[ "${{ inputs.git_branch }}" =~ production-v.* ]]; then
+        if [[ "${{ inputs.git_branch }}" =~ production-v.*  || "${{ inputs.git_branch }}" =~ production-pessoas-v.*]]; then
           echo "final_tag=latest" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]; then
             echo "final_tag=staging" >> $GITHUB_ENV
@@ -83,24 +83,49 @@ runs:
       shell: bash
       run: |
         echo "${{ inputs.git_branch }}"
-        EXTRACT_PRODUCTION_STRING=$(echo "${{inputs.git_branch }}" | sed 's/.*production-//')
-
+        
+        # Abordagem alternativa usando case
+        case "${{ inputs.git_branch }}" in
+          *production-pessoas-*)
+            EXTRACT_PRODUCTION_STRING=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-pessoas-//')
+            PESSOAS_SUFFIX="-pessoas"
+            ;;
+          *production-*)
+            EXTRACT_PRODUCTION_STRING=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-//')
+            PESSOAS_SUFFIX=""
+            ;;
+          *)
+            echo "Branch não contém production- ou production-pessoas-"
+            exit 1
+            ;;
+        esac
+        
         echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
+        echo "PESSOAS_SUFFIX=$PESSOAS_SUFFIX" >> $GITHUB_ENV
+    
+    - name: Show image name
+      shell: bash
+      run: |
+        echo "NORMAL"
+        echo "${{ inputs.registry_name }}/${{ inputs.project_name }}${{env.PESSOAS_SUFFIX}}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.final_tag }}"
+        echo "${{ inputs.registry_name }}/${{ inputs.project_name }}${{env.PESSOAS_SUFFIX}}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}"
+        echo "---------------------------------------------------------------------------------------"
+      
 
-    - name: Build and push Docker
-      uses: docker/build-push-action@v4.0.0
-      with:
-        context: .
-        file: ${{ inputs.dockerfile_name }}
-        build-args: |
-          BUILD=${{ inputs.build }}
-          RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
-        labels: |
-          --label source-branch=${{ github.ref_name }}
-          --label build-commit=${{ github.sha }}
-          --label repository=${{ github.repository }}
-          --label source-build=github
-        tags: |
-          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.final_tag }},
-          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}
-        push: true
+    # - name: Build and push Docker
+    #   uses: docker/build-push-action@v4.0.0
+    #   with:
+    #     context: .
+    #     file: ${{ inputs.dockerfile_name }}
+    #     build-args: |
+    #       BUILD=${{ inputs.build }}
+    #       RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
+    #     labels: |
+    #       --label source-branch=${{ github.ref_name }}
+    #       --label build-commit=${{ github.sha }}
+    #       --label repository=${{ github.repository }}
+    #       --label source-build=github
+    #     tags: |
+    #       ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.final_tag }},
+    #       ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}
+    #     push: true
