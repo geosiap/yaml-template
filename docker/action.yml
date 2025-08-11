@@ -112,20 +112,20 @@ runs:
         echo "---------------------------------------------------------------------------------------"
       
 
-    # - name: Build and push Docker
-    #   uses: docker/build-push-action@v4.0.0
-    #   with:
-    #     context: .
-    #     file: ${{ inputs.dockerfile_name }}
-    #     build-args: |
-    #       BUILD=${{ inputs.build }}
-    #       RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
-    #     labels: |
-    #       --label source-branch=${{ github.ref_name }}
-    #       --label build-commit=${{ github.sha }}
-    #       --label repository=${{ github.repository }}
-    #       --label source-build=github
-    #     tags: |
-    #       ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.final_tag }},
-    #       ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}
-    #     push: true
+    - name: Build and push Docker
+      uses: docker/build-push-action@v4.0.0
+      with:
+        context: .
+        file: ${{ inputs.dockerfile_name }}
+        build-args: |
+          BUILD=${{ inputs.build }}
+          RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
+        labels: |
+          --label source-branch=${{ github.ref_name }}
+          --label build-commit=${{ github.sha }}
+          --label repository=${{ github.repository }}
+          --label source-build=github
+        tags: |
+          ${{ inputs.registry_name }}/${{ inputs.project_name }}${{env.PESSOAS_SUFFIX}}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.final_tag }},
+          ${{ inputs.registry_name }}/${{ inputs.project_name }}${{env.PESSOAS_SUFFIX}}:${{ inputs.docker_back_front }}${{ env.condition_hifen }}${{ env.EXTRACT_PRODUCTION_STRING }}.${{ inputs.build }}
+        push: true
