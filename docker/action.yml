@@ -95,19 +95,22 @@ runs:
           *production-pessoas-*)
             EXTRACT_PRODUCTION_STRING=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-pessoas-//')
             PESSOAS_SUFFIX="-pessoas"
+            echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
+            echo "PESSOAS_SUFFIX=$PESSOAS_SUFFIX" >> $GITHUB_ENV
             ;;
           *production-*)
             EXTRACT_PRODUCTION_STRING=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-//')
             PESSOAS_SUFFIX=""
+            echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
+            echo "PESSOAS_SUFFIX=$PESSOAS_SUFFIX" >> $GITHUB_ENV
             ;;
           *)
-            echo "Branch não contém production- ou production-pessoas-"
-            exit 1
+            # Para branches que não são de production, define valores padrão
+            echo "Branch não é de production, definindo valores padrão"
+            echo "EXTRACT_PRODUCTION_STRING=${{ inputs.git_branch }}" >> $GITHUB_ENV
+            echo "PESSOAS_SUFFIX=" >> $GITHUB_ENV
             ;;
         esac
-        
-        echo "EXTRACT_PRODUCTION_STRING=$EXTRACT_PRODUCTION_STRING" >> $GITHUB_ENV
-        echo "PESSOAS_SUFFIX=$PESSOAS_SUFFIX" >> $GITHUB_ENV
     
     - name: Show image name
       shell: bash
