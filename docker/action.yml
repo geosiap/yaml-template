@@ -38,7 +38,7 @@ runs:
           echo "$GITHUB_REF_NAME"
           EXTRACT_LAST_NUMBER=$(echo "$GITHUB_REF_NAME" | sed 's/.*\.//')
           if [[ "${{ inputs.git_branch }}" =~ production-pessoas-v.* ]]; then
-            EXTRACT_LAST_NUMBER=$((EXTRACT_LAST_NUMBER + 2025))
+            EXTRACT_LAST_NUMBER="${EXTRACT_LAST_NUMBER}.2025"
             echo "EXTRACT_LAST_NUMBER=$EXTRACT_LAST_NUMBER" >> $GITHUB_ENV
             echo "Extract: $EXTRACT_LAST_NUMBER"
           else
