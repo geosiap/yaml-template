@@ -63,14 +63,12 @@ runs:
         # Determinar se é branch de production
         if [[ "${{ inputs.git_branch }}" =~ production-pessoas-v.* ]]; then
           # Caso: production-pessoas-v1.2.3 -> geosiap/contas:backend-pessoas-latest + geosiap/contas:backend-pessoas-v1.2.3.build
-          PROJECT_SUFFIX="-pessoas"
           EXTRACT_VERSION=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-pessoas-//')
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}${PROJECT_SUFFIX}:${{ inputs.docker_back_front }}-latest"
-          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}${PROJECT_SUFFIX}:${{ inputs.docker_back_front }}-${EXTRACT_VERSION}.${{ inputs.build }}"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-pessoas-latest"
+          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-pessoas-${EXTRACT_VERSION}.${{ inputs.build }}"
           echo "DOCKER_TAGS=${TAG1},${TAG2}" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" =~ production-v.* ]]; then
           # Caso: production-v1.2.3 -> geosiap/contas:backend-latest + geosiap/contas:backend-v1.2.3.build
-          PROJECT_SUFFIX=""
           EXTRACT_VERSION=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-//')
           TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-latest"
           TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${EXTRACT_VERSION}.${{ inputs.build }}"
