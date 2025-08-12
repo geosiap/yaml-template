@@ -60,30 +60,37 @@ runs:
     - name: Set image tags
       shell: bash
       run: |
+        # Verificar se deve usar hífen
+        if [[ "${{ inputs.docker_back_front }}" != '' ]]; then
+          HIFEN="-"
+        else
+          HIFEN=""
+        fi
+        
         # Determinar se é branch de production
         if [[ "${{ inputs.git_branch }}" =~ production-pessoas-v.* ]]; then
           # Caso: production-pessoas-v1.2.3 -> geosiap/contas:backend-pessoas-latest + geosiap/contas:backend-pessoas-v1.2.3.build
           EXTRACT_VERSION=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-pessoas-//')
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-pessoas-latest"
-          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-pessoas-${EXTRACT_VERSION}.${{ inputs.build }}"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}pessoas-latest"
+          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}pessoas-${EXTRACT_VERSION}.${{ inputs.build }}"
           echo "DOCKER_TAGS=${TAG1},${TAG2}" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" =~ production-v.* ]]; then
           # Caso: production-v1.2.3 -> geosiap/contas:backend-latest + geosiap/contas:backend-v1.2.3.build
           EXTRACT_VERSION=$(echo "${{ inputs.git_branch }}" | sed 's/.*production-//')
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-latest"
-          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${EXTRACT_VERSION}.${{ inputs.build }}"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}latest"
+          TAG2="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}${EXTRACT_VERSION}.${{ inputs.build }}"
           echo "DOCKER_TAGS=${TAG1},${TAG2}" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]; then
           # Caso: staging -> geosiap/contas:backend-staging
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-staging"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}staging"
           echo "DOCKER_TAGS=${TAG1}" >> $GITHUB_ENV
         elif [[ "${{ inputs.git_branch }}" == "pessoas" ]]; then
           # Caso: pessoas -> geosiap/contas:backend-pessoas
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-pessoas"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}pessoas"
           echo "DOCKER_TAGS=${TAG1}" >> $GITHUB_ENV
         else
           # Caso: outras branches -> geosiap/contas:backend-nomebranch
-          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${{ inputs.git_branch }}"
+          TAG1="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}${HIFEN}${{ inputs.git_branch }}"
           echo "DOCKER_TAGS=${TAG1}" >> $GITHUB_ENV
         fi
         
