@@ -28,6 +28,9 @@ inputs:
     description: "Github build number"
   tag:
     description: "Tag da imagem. Default: latest"
+  lib_token:
+    description: "Token para acessar libs privadas"
+    required: true
 
 runs:
   using: "composite"
@@ -120,6 +123,7 @@ runs:
         build-args: |
           BUILD=${{ inputs.build }}
           RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
+          LIB_TOKEN=${{ inputs.lib_token }}
         labels: |
           --label source-branch=${{ github.ref_name }}
           --label build-commit=${{ github.sha }}
