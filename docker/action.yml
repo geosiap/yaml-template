@@ -96,6 +96,7 @@ runs:
           BUILD=${{ inputs.build }}
           RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
           BRANCH_NAME=${{ inputs.git_branch }}
+          LIB_TOKEN=${{ secrets.LIB_TOKEN }}
         labels: |
           --label source-branch=${{ github.ref_name }}
           --label build-commit=${{ github.sha }}
