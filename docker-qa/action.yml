@@ -20,6 +20,11 @@ inputs:
   dockerfile_name:
     description: "Dockerfile Name"
     default: "Dockerfile"
+  build:
+    description: "Github build number"
+  lib_token:
+    description: "Token para acessar libs privadas"
+    required: true
 
 runs:
   using: "composite"
@@ -39,6 +44,16 @@ runs:
       with:
         context: .
         file: ${{ inputs.dockerfile_name }}
+        build-args: |
+          BUILD=${{ inputs.build }}
+          RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
+          BRANCH_NAME=${{ inputs.git_branch }}
+          LIB_TOKEN=${{ inputs.lib_token }}
+        labels: |
+          --label source-branch=${{ github.ref_name }}
+          --label build-commit=${{ github.sha }}
+          --label repository=${{ github.repository }}
+          --label source-build=github
         tags: |
           ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-qa-latest
         push: true
