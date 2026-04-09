@@ -1,0 +1,19 @@
+name: Listar Packages da Org
+
+on:
+  workflow_dispatch: # roda manualmente pelo GitHub Actions
+
+jobs:
+  listar-packages:
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: read
+
+    steps:
+      - name: Listar packages via API do GitHub
+        run: |
+          curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/orgs/${{ github.repository_owner }}/packages?package_type=npm
