@@ -31,6 +31,9 @@ inputs:
   lib_token:
     description: "Token para acessar libs privadas"
     required: true
+  lib_token_desk:
+    description: "Token para acessar libs privadas do Desk"
+    required: true
 
 runs:
   using: "composite"
@@ -100,6 +103,7 @@ runs:
           RELEASE=${{ env.EXTRACT_LAST_NUMBER }}
           BRANCH_NAME=${{ inputs.git_branch }}
           LIB_TOKEN=${{ inputs.lib_token }}
+          LIB_TOKEN_DESK=${{ inputs.lib_token_desk }}
         labels: |
           --label source-branch=${{ github.ref_name }}
           --label build-commit=${{ github.sha }}
