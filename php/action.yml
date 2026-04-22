@@ -1,0 +1,137 @@
+name: "PHP — Qualidade e Segurança"
+description: |
+  Executa análise de qualidade para projetos PHP puro (sem framework).
+  Steps: PHPUnit (testes), PHPStan (análise estática), PHPCBF (PSR-12, informativo), Snyk, Semgrep (SAST OWASP).
+  Todos os steps rodam sequencialmente no mesmo job do chamador.
+
+inputs:
+
+  php_version:
+    description: "Versão do PHP (ex: '8.2', '8.3')"
+    required: false
+    default: "8.2"
+
+  phpunit_version:
+    description: "Constraint de versão do PHPUnit para o setup-php (ex: '^10')"
+    required: false
+    default: "^10"
+
+  app_folder:
+    description: |
+      Pasta(s) da aplicação para PHPStan, PHPCBF e Semgrep.
+      Aceita múltiplos caminhos separados por espaço.
+      Ex: "src" ou "application/_classes application/_funcoes application/_api"
+    required: true
+
+  vendor_folder:
+    description: |
+      Nome da pasta de dependências do Composer para excluir da análise.
+      Projetos legados podem usar '_vendors' em vez de 'vendor'.
+    required: false
+    default: "vendor"
+
+  phpcs_ignore:
+    description: "Pastas adicionais a ignorar no PHPCBF, separadas por vírgula (ex: '_cache,_logs')"
+    required: false
+    default: ""
+
+  phpstan_level:
+    description: "Nível de rigor do PHPStan (0 = mais permissivo, 9 = mais restrito)"
+    required: false
+    default: "3"
+
+  phpstan_config:
+    description: "Caminho relativo para o phpstan.neon a partir da raiz do projeto"
+    required: false
+    default: "phpstan.neon"
+
+  snyk_token:
+    description: "Token de autenticação do Snyk (Settings → Secrets → SNYK_TOKEN)"
+    required: true
+
+  lib_token:
+    description: "Token para pacotes privados da organização (GitHub Packages). Opcional."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Ambiente ────────────────────────────────────────────────────────────────
+    - name: Instalar PHP ${{ inputs.php_version }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php_version }}
+        tools: phpunit:${{ inputs.phpunit_version }}, phpstan, phpcbf
+        coverage: pcov
+
+    - name: Instalar dependências via Composer
+      shell: bash
+      run: composer install --prefer-dist --no-interaction --no-progress
+
+    # ── Syntax Check ────────────────────────────────────────────────────────────
+    - name: PHP Syntax Check — valida todos os .php
+      shell: bash
+      run: |
+        find . -name "*.php" -not -path "./${{ inputs.vendor_folder }}/*" -print0 \
+          | xargs -0 -P4 php -l
+
+    # ── PHPUnit ─────────────────────────────────────────────────────────────────
+    - name: PHPUnit — testes unitários com cobertura
+      shell: bash
+      run: phpunit --testdox --coverage-text
+
+    # ── PHPStan ─────────────────────────────────────────────────────────────────
+    - name: PHPStan — análise estática (level ${{ inputs.phpstan_level }})
+      shell: bash
+      run: |
+        phpstan analyse \
+          --level ${{ inputs.phpstan_level }} \
+          --configuration ${{ inputs.phpstan_config }} \
+          --error-format=json \
+          ${{ inputs.app_folder }} \
+          --no-interaction > /tmp/phpstan-report.json 2>&1 || true
+
+        if [ -s /tmp/phpstan-report.json ]; then
+          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json 2>/dev/null || echo "?")
+          echo "Erros encontrados: $ERRORS"
+          jq -r '.files | keys[]' /tmp/phpstan-report.json 2>/dev/null | head -20
+        else
+          echo "Sem erros PHPStan encontrados."
+        fi
+
+    # ── PHPCBF ──────────────────────────────────────────────────────────────────
+    # Roda em modo report (não altera arquivos) — informativo, não bloqueia.
+    - name: PHPCBF — verifica padrão PSR-12
+      shell: bash
+      run: |
+        IGNORE_FLAG=""
+        if [ -n "${{ inputs.phpcs_ignore }}" ]; then
+          IGNORE_FLAG="--ignore=${{ inputs.phpcs_ignore }}"
+        fi
+
+        phpcbf --standard=PSR12 \
+          $IGNORE_FLAG \
+          --report=full \
+          --report-file=/tmp/phpcbf-report.txt \
+          ${{ inputs.app_folder }} || true
+
+        if [ -s /tmp/phpcbf-report.txt ]; then
+          echo "## PSR-12 Code Style Issues"
+          cat /tmp/phpcbf-report.txt
+        else
+          echo "Sem issues PSR-12 encontrados."
+        fi
+
+    # ── Snyk ────────────────────────────────────────────────────────────────────
+    - name: Instalar Snyk CLI
+      shell: bash
+      run: npm install -g snyk
+
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      run: |
+        snyk auth ${{ inputs.snyk_token }}
+        snyk test --all-projects
+

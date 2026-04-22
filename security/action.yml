@@ -1,0 +1,132 @@
+name: "Segurança — Trivy IaC + Hadolint + Gitleaks + Semgrep"
+description: |
+  Verifica segurança antes do build.
+  Steps: Trivy IaC (misconfigurações em Dockerfiles/compose), Hadolint (boas práticas),
+  Gitleaks (segredos expostos em commits), Semgrep (SAST OWASP Top 10).
+
+  Requer checkout com fetch-depth: 0 no job chamador (necessário para o Gitleaks
+  analisar todo o histórico de commits, não apenas o último).
+
+  dockerfile_extra:
+    Usar em projetos full-stack com dois Dockerfiles separados (ex: gcc-web).
+    O segundo arquivo recebe hadolint_ignore_extra; se vazio, usa hadolint_ignore.
+
+  semgrep_rules:
+    Regras específicas da linguagem + OWASP.
+    Ex: 'p/php p/owasp-top-ten' ou 'p/ruby p/owasp-top-ten'.
+    Semgrep aplica cada regra apenas aos arquivos da linguagem correspondente,
+    então passar p/ruby em um projeto PHP não gera ruído.
+
+inputs:
+
+  github_token:
+    description: "GITHUB_TOKEN para autenticação do Gitleaks"
+    required: true
+
+  dockerfile:
+    description: "Dockerfile principal a validar com Hadolint"
+    required: false
+    default: "Dockerfile"
+
+  dockerfile_extra:
+    description: |
+      Segundo Dockerfile para validar com Hadolint.
+      Usar em projetos full-stack com imagens separadas (ex: Dockerfile.frontend).
+    required: false
+    default: ""
+
+  hadolint_ignore:
+    description: "Regras Hadolint a ignorar para o dockerfile principal, separadas por vírgula"
+    required: false
+    default: "DL3008,DL3009,DL3015,DL3020,DL3059,SC2016"
+
+  hadolint_ignore_extra:
+    description: |
+      Regras Hadolint a ignorar no dockerfile_extra.
+      Se vazio, reutiliza hadolint_ignore.
+    required: false
+    default: ""
+
+  semgrep_rules:
+    description: |
+      Regras do Semgrep separadas por espaço.
+      Inclua a regra da linguagem do projeto + p/owasp-top-ten.
+      Ex: 'p/php p/owasp-top-ten', 'p/ruby p/owasp-top-ten', 'p/python p/owasp-top-ten'.
+    required: false
+    default: "p/owasp-top-ten"
+
+  semgrep_path:
+    description: |
+      Caminho a escanear com Semgrep.
+      Padrão '.' escaneia o repositório inteiro — Semgrep aplica regras
+      apenas aos arquivos da linguagem correspondente (sem falsos positivos).
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Trivy IaC ────────────────────────────────────────────────────────────────
+    # Varre todo o repositório buscando misconfigurações em Dockerfiles e
+    # docker-compose.yml antes de construir qualquer imagem.
+    - name: Instalar Trivy CLI
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y wget apt-transport-https gnupg
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update -qq
+        sudo apt-get install -y trivy
+
+    - name: Trivy — scan de misconfigurações (IaC/Dockerfile)
+      shell: bash
+      run: |
+        trivy config \
+          --severity CRITICAL,HIGH \
+          --exit-code 1 \
+          .
+
+    # ── Hadolint ────────────────────────────────────────────────────────────────
+    - name: Hadolint — valida ${{ inputs.dockerfile }}
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile }}
+        ignore: ${{ inputs.hadolint_ignore }}
+
+    - name: Hadolint — valida ${{ inputs.dockerfile_extra }}
+      if: ${{ inputs.dockerfile_extra != '' }}
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile_extra }}
+        ignore: ${{ inputs.hadolint_ignore_extra || inputs.hadolint_ignore }}
+
+    # ── Gitleaks ────────────────────────────────────────────────────────────────
+    # Requer fetch-depth: 0 no checkout do job chamador para analisar histórico
+    # completo e não apenas o último commit.
+    - name: Gitleaks — scan de secrets
+      uses: gitleaks/gitleaks-action@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+
+    # ── Semgrep ─────────────────────────────────────────────────────────────────
+    # SAST: detecta padrões de segurança conhecidos (OWASP Top 10 + regras da linguagem).
+    # Semgrep aplica cada ruleset apenas aos arquivos da linguagem correspondente,
+    # portanto escanear '.' com p/ruby não gera ruído em arquivos Python/PHP.
+    - name: Instalar Semgrep
+      shell: bash
+      run: pip install semgrep
+
+    - name: Semgrep — SAST (OWASP Top 10)
+      shell: bash
+      run: |
+        CONFIGS=$(echo "${{ inputs.semgrep_rules }}" | xargs -n1 printf -- "--config %s ")
+        semgrep scan \
+          $CONFIGS \
+          --metrics=off \
+          --error \
+          --text \
+          ${{ inputs.semgrep_path }}/

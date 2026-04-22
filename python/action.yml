@@ -1,0 +1,185 @@
+name: "Python — Qualidade e Segurança"
+description: |
+  Executa análise de qualidade para projetos Python.
+  Jobs: pytest (testes + cobertura), Pylint (qualidade), Flake8 (PEP 8), Bandit (SAST), Semgrep (OWASP).
+
+  Parâmetro pylint_disable:
+    Por padrão desativa 'C' (convention) e 'R' (refactor) para focar em
+    W (warning), E (error) e F (fatal). Passe '' para ativar todas as categorias.
+
+  Parâmetro bandit_severity:
+    '-l'   = reporta LOW e acima (tudo).
+    '-ll'  = reporta MEDIUM e acima (recomendado).
+    '-lll' = reporta apenas HIGH.
+
+inputs:
+
+  python_version:
+    description: "Versão do Python (ex: '3.11', '3.12')"
+    required: false
+    default: "3.11"
+
+  app_folder:
+    description: |
+      Pasta principal da aplicação para análise.
+      Use '.' para projetos onde o Python está na raiz.
+    required: false
+    default: "."
+
+  tests_folder:
+    description: "Pasta de testes do pytest"
+    required: false
+    default: "tests"
+
+  requirements_file:
+    description: "Caminho para o arquivo de dependências"
+    required: false
+    default: "requirements.txt"
+
+  flake8_max_line_length:
+    description: "Comprimento máximo de linha para o Flake8"
+    required: false
+    default: "120"
+
+  flake8_exclude:
+    description: "Padrões de exclusão do Flake8 separados por vírgula"
+    required: false
+    default: ".git,__pycache__,*.egg-info,.env,venv"
+
+  pylint_disable:
+    description: |
+      Categorias do Pylint a desativar separadas por vírgula.
+      'C' = convention, 'R' = refactor, 'W' = warning, 'E' = error, 'F' = fatal.
+      Padrão 'C,R': foca apenas em W, E e F.
+      Passe '' para não desativar nenhuma categoria.
+    required: false
+    default: "C,R"
+
+  bandit_severity:
+    description: |
+      Nível mínimo de severidade para o Bandit reportar.
+      '-l'   = LOW e acima.
+      '-ll'  = MEDIUM e acima (recomendado).
+      '-lll' = HIGH apenas.
+    required: false
+    default: "-ll"
+
+  snyk_token:
+    description: "Token de autenticação do Snyk"
+    required: true
+
+  lib_token:
+    description: "Token para pacotes privados da organização. Opcional."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Ambiente ────────────────────────────────────────────────────────────────
+    - name: Instalar Python ${{ inputs.python_version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Instalar dependências
+      shell: bash
+      run: pip install -r ${{ inputs.requirements_file }} pytest pytest-cov pylint flake8 bandit
+
+    # ── Syntax Check ────────────────────────────────────────────────────────────
+    - name: Python Syntax Check — valida todos os .py
+      shell: bash
+      run: |
+        find ${{ inputs.app_folder }} -name "*.py" \
+          -not -path "./.git/*" \
+          -not -path "./venv/*" \
+          -not -path "./__pycache__/*" \
+          | xargs -P4 python -m py_compile
+
+    # ── pytest ──────────────────────────────────────────────────────────────────
+    - name: pytest — testes unitários com cobertura
+      shell: bash
+      run: |
+        if [ -d "${{ inputs.tests_folder }}" ]; then
+          pytest \
+            --tb=short \
+            --cov=${{ inputs.app_folder }} \
+            --cov-report=term-missing \
+            ${{ inputs.tests_folder }}
+        else
+          echo "Pasta ${{ inputs.tests_folder }} não encontrada — pytest pulado."
+        fi
+
+    # ── Pylint ──────────────────────────────────────────────────────────────────
+    - name: Pylint — análise de qualidade
+      shell: bash
+      run: |
+        DISABLE_FLAG=""
+        [ -n "${{ inputs.pylint_disable }}" ] && DISABLE_FLAG="--disable=${{ inputs.pylint_disable }}"
+
+        PY_FILES=$(find ${{ inputs.app_folder }} -name "*.py" \
+          -not -path "./.git/*" \
+          -not -path "./venv/*" \
+          -not -path "./__pycache__/*")
+
+        if [ -z "$PY_FILES" ]; then
+          echo "Nenhum .py encontrado em ${{ inputs.app_folder }} — Pylint pulado."
+          exit 0
+        fi
+
+        echo "$PY_FILES" | xargs pylint \
+          $DISABLE_FLAG \
+          --output-format=json > /tmp/pylint-report.json 2>&1 || true
+
+        ISSUES=$(jq 'length' /tmp/pylint-report.json 2>/dev/null || echo "0")
+        echo "Issues encontradas: $ISSUES"
+        [ "$ISSUES" -gt "0" ] && \
+          jq -r '.[] | "\(.path):\(.line) [\(.symbol)] \(.message)"' /tmp/pylint-report.json | head -30
+
+    # ── Flake8 ──────────────────────────────────────────────────────────────────
+    - name: Flake8 — conformidade com PEP 8
+      shell: bash
+      run: |
+        flake8 \
+          --max-line-length=${{ inputs.flake8_max_line_length }} \
+          --exclude=${{ inputs.flake8_exclude }} \
+          --format=default \
+          --output-file=/tmp/flake8-report.txt \
+          ${{ inputs.app_folder }} || true
+
+        if [ -s /tmp/flake8-report.txt ]; then
+          echo "Violations PEP 8 encontradas:"
+          cat /tmp/flake8-report.txt
+        else
+          echo "Sem violations PEP 8."
+        fi
+
+    # ── Bandit ──────────────────────────────────────────────────────────────────
+    - name: Bandit — SAST especializado em Python
+      shell: bash
+      run: |
+        bandit \
+          -r ${{ inputs.app_folder }} \
+          --format json \
+          --output /tmp/bandit-report.json \
+          --exclude .git,__pycache__,venv \
+          ${{ inputs.bandit_severity }} || true
+
+        ISSUES=$(jq '.results | length' /tmp/bandit-report.json 2>/dev/null || echo "0")
+        echo "Issues encontradas: $ISSUES"
+        [ "$ISSUES" -gt "0" ] && \
+          jq -r '.results[] | "\(.issue_severity) [\(.issue_confidence)] — \(.filename):\(.line_number): \(.issue_text)"' \
+            /tmp/bandit-report.json
+
+    # ── Snyk ────────────────────────────────────────────────────────────────────
+    - name: Instalar Snyk CLI
+      shell: bash
+      run: npm install -g snyk
+
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      run: |
+        snyk auth ${{ inputs.snyk_token }}
+        snyk test --all-projects --no-monitor
+

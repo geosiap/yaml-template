@@ -1,0 +1,182 @@
+name: "Laravel — Qualidade e Segurança"
+description: |
+  Executa análise de qualidade para projetos PHP com Laravel.
+  Jobs: PHPUnit (com setup Laravel), PHPStan, PHPCS (PSR-12), Rector (dry-run), Semgrep (SAST OWASP).
+  Diferenças em relação ao template php:
+    - Prepara o ambiente Laravel (.env + artisan key:generate) antes dos testes
+    - Inclui o Rector em dry-run para sugestões de modernização de código
+    - PHPStan usa extensões Laravel (bcmath, pdo, intl)
+    - PHPCS percorre app/ por padrão (convenção Laravel)
+
+inputs:
+
+  php_version:
+    description: "Versão do PHP (ex: '8.4')"
+    required: false
+    default: "8.4"
+
+  phpunit_version:
+    description: "Constraint de versão do PHPUnit (ex: '^10')"
+    required: false
+    default: "^10"
+
+  php_extensions:
+    description: "Extensões PHP separadas por vírgula"
+    required: false
+    default: "mbstring,bcmath,pdo,pdo_mysql,xml,curl,zip,intl"
+
+  app_folder:
+    description: "Pasta principal da aplicação Laravel"
+    required: false
+    default: "app"
+
+  tests_folder:
+    description: "Pasta de testes unitários Laravel"
+    required: false
+    default: "tests"
+
+  env_file:
+    description: "Arquivo .env de exemplo para copiar antes dos testes"
+    required: false
+    default: ".env.example"
+
+  phpstan_level:
+    description: "Nível de rigor do PHPStan (0 = mais permissivo, 9 = mais restrito)"
+    required: false
+    default: "3"
+
+  phpstan_config:
+    description: "Caminho relativo para o phpstan.neon"
+    required: false
+    default: "phpstan.neon"
+
+  run_rector:
+    description: "Executar Rector em modo dry-run (true/false)"
+    required: false
+    default: "true"
+
+  snyk_token:
+    description: "Token de autenticação do Snyk"
+    required: true
+
+  lib_token:
+    description: "Token para pacotes privados da organização (GitHub Packages). Opcional."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Ambiente ────────────────────────────────────────────────────────────────
+    - name: Instalar PHP ${{ inputs.php_version }} com extensões Laravel
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php_version }}
+        extensions: ${{ inputs.php_extensions }}
+        tools: phpunit:${{ inputs.phpunit_version }}, phpstan, phpcs
+        coverage: pcov
+
+    - name: Instalar dependências via Composer
+      shell: bash
+      run: composer install --prefer-dist --no-interaction --no-progress
+
+    - name: Preparar ambiente Laravel
+      shell: bash
+      run: |
+        cp ${{ inputs.env_file }} .env
+        php artisan key:generate
+
+    # ── Syntax Check ────────────────────────────────────────────────────────────
+    - name: PHP Syntax Check — valida todos os .php
+      shell: bash
+      run: |
+        find . -name "*.php" -not -path "./vendor/*" -print0 \
+          | xargs -0 -P4 php -l
+
+    # ── PHPUnit ─────────────────────────────────────────────────────────────────
+    - name: PHPUnit — testes unitários com cobertura
+      shell: bash
+      run: |
+        if [ -d "${{ inputs.tests_folder }}" ]; then
+          phpunit --testdox --coverage-text
+        else
+          echo "Pasta ${{ inputs.tests_folder }} não encontrada — PHPUnit pulado."
+        fi
+
+    # ── PHPStan ─────────────────────────────────────────────────────────────────
+    - name: PHPStan — análise estática (level ${{ inputs.phpstan_level }})
+      shell: bash
+      run: |
+        phpstan analyse \
+          --level ${{ inputs.phpstan_level }} \
+          --configuration ${{ inputs.phpstan_config }} \
+          --error-format=json \
+          ${{ inputs.app_folder }} \
+          --no-interaction > /tmp/phpstan-report.json 2>&1 || true
+
+        if [ -s /tmp/phpstan-report.json ]; then
+          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json 2>/dev/null || echo "?")
+          echo "Erros encontrados: $ERRORS"
+          jq -r '.files | keys[]' /tmp/phpstan-report.json 2>/dev/null | head -20
+        else
+          echo "Sem erros PHPStan encontrados."
+        fi
+
+    # ── PHPCS ───────────────────────────────────────────────────────────────────
+    - name: PHPCS — verifica padrão PSR-12
+      shell: bash
+      run: |
+        PHP_FILES=$(find "$GITHUB_WORKSPACE/${{ inputs.app_folder }}" \
+          -name "*.php" \
+          -not -path "*/vendor/*" \
+          -not -path "*/storage/*" \
+          -not -path "*/bootstrap/cache/*")
+
+        if [ -z "$PHP_FILES" ]; then
+          echo "Nenhum .php encontrado em ${{ inputs.app_folder }} — PHPCS pulado."
+          exit 0
+        fi
+
+        echo "$PHP_FILES" | tr '\n' '\0' | xargs -0 phpcs \
+          --standard=PSR12 \
+          --report=full \
+          --report-file=/tmp/phpcs-report.txt
+        EXIT_CODE=$?
+
+        [ -s /tmp/phpcs-report.txt ] && cat /tmp/phpcs-report.txt
+        exit $EXIT_CODE
+
+    # ── Rector ──────────────────────────────────────────────────────────────────
+    - name: Instalar Rector
+      if: ${{ inputs.run_rector == 'true' }}
+      shell: bash
+      run: composer require rector/rector driftingly/rector-laravel --dev --no-interaction
+
+    - name: Rector — modernização de código (dry-run)
+      if: ${{ inputs.run_rector == 'true' }}
+      shell: bash
+      run: |
+        vendor/bin/rector process ${{ inputs.app_folder }} \
+          --dry-run \
+          --output-format=json > /tmp/rector-report.json 2>&1 || true
+
+        if [ -s /tmp/rector-report.json ]; then
+          CHANGES=$(jq '.changed_files | length' /tmp/rector-report.json 2>/dev/null || echo "0")
+          echo "Arquivos com sugestões de refatoração: $CHANGES"
+          jq -r '.changed_files[].file_path' /tmp/rector-report.json 2>/dev/null | head -20
+        else
+          echo "Sem sugestões Rector."
+        fi
+
+    # ── Snyk ────────────────────────────────────────────────────────────────────
+    - name: Instalar Snyk CLI
+      shell: bash
+      run: npm install -g snyk
+
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      run: |
+        snyk auth ${{ inputs.snyk_token }}
+        snyk test --all-projects --no-monitor
+

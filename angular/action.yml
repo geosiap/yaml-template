@@ -1,0 +1,132 @@
+name: "Angular — Qualidade e Segurança"
+description: |
+  Executa análise de qualidade para projetos Angular / TypeScript.
+  Jobs: ESLint (com fallback automático para ng lint → TSLint → ESLint CLI).
+
+  Estratégia de lint (fallback automático):
+    1. ng lint  → usa Angular CLI se angular.json existir
+    2. tslint   → usa TSLint se tslint.json existir (projetos legados Angular < 11)
+    3. eslint   → usa ESLint diretamente como última opção
+
+  Registry privado npm:
+    Se o projeto usar pacotes da organização via GitHub Packages,
+    forneça lib_token e defina npm_scope (ex: '@geosiap').
+
+inputs:
+
+  node_version:
+    description: "Versão do Node.js (ex: '18', '20')"
+    required: false
+    default: "18"
+
+  working_directory:
+    description: |
+      Pasta raiz do projeto Angular.
+      Use '.' para projetos onde o Angular está na raiz do repositório,
+      ou 'frontend' para projetos full-stack como o gcc-web.
+    required: false
+    default: "frontend"
+
+  package_manager:
+    description: "Gerenciador de pacotes: 'yarn' ou 'npm'"
+    required: false
+    default: "yarn"
+
+  yarn_frozen_lockfile:
+    description: "Usar --frozen-lockfile no yarn install (recomendado em CI)"
+    required: false
+    default: "true"
+
+  npm_scope:
+    description: |
+      Escopo dos pacotes privados da organização no GitHub Packages (ex: '@geosiap').
+      Deixar vazio se o projeto não usar pacotes privados.
+    required: false
+    default: ""
+
+  eslint_extensions:
+    description: "Extensões de arquivo para o ESLint (ex: '.ts,.html')"
+    required: false
+    default: ".ts,.html"
+
+  max_warnings:
+    description: "Número máximo de warnings permitidos antes de falhar (0 = nenhum)"
+    required: false
+    default: "0"
+
+  snyk_token:
+    description: "Token de autenticação do Snyk"
+    required: true
+
+  lib_token:
+    description: |
+      Token para autenticação no GitHub Packages (npm privado).
+      Necessário apenas se npm_scope for definido.
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Ambiente ────────────────────────────────────────────────────────────────
+    - name: Instalar Node.js ${{ inputs.node_version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Configurar registry privado npm (GitHub Packages)
+      if: ${{ inputs.npm_scope != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "${{ inputs.npm_scope }}:registry=https://npm.pkg.github.com" >> .npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.lib_token }}" >> .npmrc
+
+    - name: Instalar dependências (yarn)
+      if: ${{ inputs.package_manager == 'yarn' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        FROZEN_FLAG=""
+        [ "${{ inputs.yarn_frozen_lockfile }}" = "true" ] && FROZEN_FLAG="--frozen-lockfile"
+        yarn install $FROZEN_FLAG --network-timeout 600000
+
+    - name: Instalar dependências (npm)
+      if: ${{ inputs.package_manager == 'npm' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: npm ci
+
+    # ── ESLint / ng lint ────────────────────────────────────────────────────────
+    - name: ESLint — análise de qualidade TypeScript (ng lint → TSLint → ESLint)
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ -f "angular.json" ]; then
+          echo "Usando Angular CLI (ng lint)..."
+          npx ng lint --max-warnings=${{ inputs.max_warnings }} || \
+          yarn lint 2>/dev/null || \
+          npx eslint . \
+            --ext ${{ inputs.eslint_extensions }} \
+            --max-warnings ${{ inputs.max_warnings }}
+
+        elif [ -f "tslint.json" ]; then
+          echo "angular.json não encontrado — usando TSLint (projeto legado)..."
+          npx tslint --project tsconfig.json -t verbose
+
+        else
+          echo "Usando ESLint diretamente..."
+          npx eslint . \
+            --ext ${{ inputs.eslint_extensions }} \
+            --max-warnings ${{ inputs.max_warnings }}
+        fi
+
+    # ── Snyk ────────────────────────────────────────────────────────────────────
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        npm install -g snyk
+        snyk auth ${{ inputs.snyk_token }}
+        snyk test --all-projects --no-monitor

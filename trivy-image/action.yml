@@ -1,0 +1,85 @@
+name: "Trivy — Scan de CVEs nas imagens Docker"
+description: |
+  Escaneia CVEs em imagens Docker já construídas e publicadas no registry.
+  Cobre: pacotes do SO, libs de runtime e dependências da aplicação dentro da imagem.
+
+  Deve rodar após o job de build (needs: build no workflow chamador).
+
+  image_ref_extra:
+    Para projetos full-stack com duas imagens (ex: gcc-web backend + frontend).
+    Se vazio, apenas image_ref é escaneada.
+
+inputs:
+
+  docker_login:
+    description: "Usuário para autenticação no registry Docker"
+    required: true
+
+  docker_password:
+    description: "Senha/token para autenticação no registry Docker"
+    required: true
+
+  image_ref:
+    description: |
+      Referência completa da imagem principal.
+      Ex: 'registry/projeto:tag' ou 'registry/projeto:backend-staging.42'
+    required: true
+
+  image_ref_extra:
+    description: |
+      Segunda imagem a escanear (projetos full-stack).
+      Ex: 'registry/projeto:frontend-staging'
+    required: false
+    default: ""
+
+  severity:
+    description: "Severidades a reportar separadas por vírgula"
+    required: false
+    default: "CRITICAL,HIGH,MEDIUM"
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Instalação do Trivy CLI ──────────────────────────────────────────────────
+    - name: Instalar Trivy CLI
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y wget apt-transport-https gnupg
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update -qq
+        sudo apt-get install -y trivy
+
+    # ── Autenticação no registry ─────────────────────────────────────────────────
+    # docker login no host não é herdado pelo processo do Trivy — precisa ser
+    # passado diretamente via stdin para garantir acesso à imagem privada.
+    - name: Login no Docker registry
+      shell: bash
+      run: |
+        echo "${{ inputs.docker_password }}" \
+          | docker login --username "${{ inputs.docker_login }}" --password-stdin
+
+    # ── Scan da imagem principal ─────────────────────────────────────────────────
+    - name: Trivy — scan de CVEs na imagem
+      shell: bash
+      run: |
+        trivy image \
+          --severity ${{ inputs.severity }} \
+          --exit-code 1 \
+          --format table \
+          "${{ inputs.image_ref }}"
+
+    # ── Scan da segunda imagem (projetos full-stack) ─────────────────────────────
+    - name: Trivy — scan de CVEs na segunda imagem
+      if: ${{ inputs.image_ref_extra != '' }}
+      shell: bash
+      run: |
+        trivy image \
+          --severity ${{ inputs.severity }} \
+          --exit-code 1 \
+          --format table \
+          "${{ inputs.image_ref_extra }}"

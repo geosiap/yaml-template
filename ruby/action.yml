@@ -1,0 +1,164 @@
+name: "Ruby — Qualidade e Segurança"
+description: |
+  Executa análise de qualidade para projetos Ruby on Rails.
+  Steps: RSpec (testes + SimpleCov), RuboCop (estilo), Brakeman (SAST Rails), Snyk, Semgrep (OWASP).
+
+  Parâmetro rubocop_mode:
+    "strict"      → falha em qualquer offense (convention, warning, error, fatal)
+    "errors_only" → falha apenas em error e fatal (padrão para projetos maduros)
+
+  LIB_TOKEN (registry privado de gems):
+    Passado via env var BUNDLE_RUBYGEMS__PKG__GITHUB__COM que o bundler lê automaticamente
+    durante o bundle install / bundler-cache do setup-ruby. Não requer 'bundle config set'.
+
+inputs:
+
+  ruby_version:
+    description: "Versão exata do Ruby (ex: '3.1.0'). Use versão exata se o Gemfile declara 'ruby X.Y.Z'."
+    required: false
+    default: "3.1.0"
+
+  working_directory:
+    description: |
+      Pasta raiz da aplicação Ruby.
+      Use '.' para projetos onde o Rails está na raiz do repositório,
+      ou 'backend' para projetos full-stack como o gcc-web.
+    required: false
+    default: "."
+
+  rspec_folder:
+    description: "Pasta de specs do RSpec"
+    required: false
+    default: "spec"
+
+  rubocop_mode:
+    description: |
+      Nível de rigor do RuboCop.
+      'strict'      → falha em qualquer offense.
+      'errors_only' → falha apenas em error e fatal (ignora convention e warning).
+    required: false
+    default: "errors_only"
+
+  brakeman_path:
+    description: |
+      Caminho para a aplicação Rails a ser analisada pelo Brakeman.
+      Use '.' se o Rails está na raiz, ou './backend' para projetos full-stack.
+    required: false
+    default: "."
+
+  system_packages:
+    description: |
+      Pacotes de sistema (apt-get) necessários para gems nativas, separados por espaço.
+      Ex: 'libpq-dev' para a gem 'pg' (PostgreSQL). Deixar vazio se não precisar.
+    required: false
+    default: ""
+
+  snyk_token:
+    description: "Token de autenticação do Snyk"
+    required: true
+
+  lib_token:
+    description: |
+      Token para acesso ao registry privado de gems da organização (GitHub Packages).
+      Necessário se o Gemfile referenciar pacotes de rubygems.pkg.github.com.
+      Passado via env var ao setup-ruby — o bundler lê automaticamente durante o cache.
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    # ── Pacotes de sistema ───────────────────────────────────────────────────────
+    # Gems nativas (ex: pg, mysql2, nokogiri) podem exigir bibliotecas do SO.
+    - name: Instalar dependências do sistema
+      if: ${{ inputs.system_packages != '' }}
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y ${{ inputs.system_packages }}
+
+    # ── Ambiente Ruby ────────────────────────────────────────────────────────────
+    # bundler-cache: true → setup-ruby executa bundle install com cache automático.
+    # LIB_TOKEN via BUNDLE_RUBYGEMS__PKG__GITHUB__COM: bundler converte dots→__
+    # e lê a env var automaticamente, sem necessidade de 'bundle config set'.
+    - name: Instalar Ruby ${{ inputs.ruby_version }} com Bundler cache
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby_version }}
+        bundler-cache: true
+        working-directory: ${{ inputs.working_directory }}
+      env:
+        BUNDLE_RUBYGEMS__PKG__GITHUB__COM: "x-oauth-basic:${{ inputs.lib_token }}"
+
+    # ── Syntax Check ────────────────────────────────────────────────────────────
+    - name: Ruby Syntax Check — valida todos os .rb
+      shell: bash
+      run: |
+        find ${{ inputs.working_directory }} -name "*.rb" \
+          -not -path "*/vendor/*" \
+          -print0 | xargs -0 -P4 ruby -c
+
+    # ── RSpec ───────────────────────────────────────────────────────────────────
+    - name: RSpec — testes unitários com cobertura (SimpleCov)
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ -d "${{ inputs.rspec_folder }}" ]; then
+          bundle exec rspec --format documentation
+        else
+          echo "Pasta ${{ inputs.rspec_folder }} não encontrada — RSpec pulado."
+        fi
+
+    # ── RuboCop ─────────────────────────────────────────────────────────────────
+    - name: RuboCop — análise de estilo e qualidade
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        bundle exec rubocop \
+          --format json \
+          --out /tmp/rubocop-report.json || true
+
+        if [ "${{ inputs.rubocop_mode }}" = "errors_only" ]; then
+          ERROR_COUNT=$(jq '[.files[].offenses[] | select(.severity == "error" or .severity == "fatal")] | length' \
+            /tmp/rubocop-report.json 2>/dev/null || echo "0")
+          echo "Offenses error/fatal: $ERROR_COUNT"
+          if [ "$ERROR_COUNT" -gt "0" ]; then
+            jq -r '.files[] | select(.offenses | map(select(.severity == "error" or .severity == "fatal")) | length > 0) | .path' \
+              /tmp/rubocop-report.json
+            exit 1
+          fi
+        else
+          TOTAL=$(jq '.summary.offense_count' /tmp/rubocop-report.json 2>/dev/null || echo "0")
+          echo "Total de offenses: $TOTAL"
+          [ "$TOTAL" -gt "0" ] && exit 1 || true
+        fi
+
+    # ── Brakeman ────────────────────────────────────────────────────────────────
+    - name: Brakeman — SAST especializado em Rails
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        bundle exec brakeman \
+          --format json \
+          --output /tmp/brakeman-report.json \
+          --no-progress \
+          ${{ inputs.brakeman_path }}
+
+        WARNINGS=$(jq '.warnings | length' /tmp/brakeman-report.json 2>/dev/null || echo "0")
+        echo "Warnings encontrados: $WARNINGS"
+        if [ "$WARNINGS" -gt "0" ]; then
+          jq -r '.warnings[] | "\(.warning_type) [\(.confidence)] — \(.file):\(.line)"' \
+            /tmp/brakeman-report.json
+        fi
+
+    # ── Snyk ────────────────────────────────────────────────────────────────────
+    - name: Instalar Snyk CLI
+      shell: bash
+      run: npm install -g snyk
+
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        snyk auth ${{ inputs.snyk_token }}
+        snyk test --all-projects --no-monitor
+
