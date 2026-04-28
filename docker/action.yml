@@ -67,7 +67,7 @@ runs:
         fi
         if [[ "${{ inputs.git_branch }}" =~ production-v.* ]]; then
           echo "final_tag=latest" >> $GITHUB_ENV
-        elif [[ "${{ inputs.git_branch }}" =~ "staging" ]]; then
+        elif [[ "${{ inputs.git_branch }}" == "staging" ]]; then
             echo "final_tag=staging" >> $GITHUB_ENV
         else
           echo "final_tag=${{ inputs.git_branch }}" >> $GITHUB_ENV
