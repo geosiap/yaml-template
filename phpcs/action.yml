@@ -11,20 +11,24 @@ inputs:
     required: false
     default: ''
   paths:
-    description: 'Caminhos a verificar (separados por espaço)'
+    description: 'Caminhos a verificar (separados por espaço, ex: "app" ou "application/_classes application/_funcoes")'
     required: true
   standard:
     description: 'Padrão de código (ex: PSR12)'
     required: false
     default: 'PSR12'
   ignore:
-    description: 'Diretórios a ignorar (separados por vírgula)'
+    description: 'Diretórios/padrões a ignorar (separados por vírgula)'
     required: false
     default: 'vendor,_vendors,_cache,_logs,storage,bootstrap/cache'
   tool:
-    description: 'Ferramenta a usar: phpcs (verificação) ou phpcbf (relatório de correções)'
+    description: 'Ferramenta: phpcs (verificação bloqueante por padrão) ou phpcbf (relatório de correções)'
     required: false
     default: 'phpcs'
+  non-blocking:
+    description: 'Se true, nunca falha o job mesmo com issues (equivalente ao || true original)'
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -39,23 +43,13 @@ runs:
     - name: ${{ inputs.tool }} — verifica padrão ${{ inputs.standard }}
       shell: bash
       run: |
-        PHP_FILES=$(find . \
-          $(echo "${{ inputs.paths }}" | tr ' ' '\n' | sed 's/^/\//') \
-          -name "*.php" \
-          $(echo "${{ inputs.ignore }}" | tr ',' '\n' | sed 's/^/-not -path "*\//;s/$\/*"/' ) \
-          2>/dev/null || true)
-
-        # Fallback: usa os paths diretamente se find falhar
-        if [ -z "$PHP_FILES" ]; then
-          PHP_FILES="${{ inputs.paths }}"
-        fi
-
         ${{ inputs.tool }} \
           --standard=${{ inputs.standard }} \
           --ignore=${{ inputs.ignore }} \
           --report=full \
           --report-file=/tmp/phpcs-report.txt \
-          ${{ inputs.paths }} || true
+          ${{ inputs.paths }}
+        TOOL_EXIT=$?
 
         if [ -s /tmp/phpcs-report.txt ]; then
           echo "## Padrão ${{ inputs.standard }} Issues"
@@ -63,3 +57,8 @@ runs:
         else
           echo "Nenhum issue de estilo encontrado!"
         fi
+
+        if [ "${{ inputs.non-blocking }}" = "true" ]; then
+          exit 0
+        fi
+        exit $TOOL_EXIT

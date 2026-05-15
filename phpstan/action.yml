@@ -50,7 +50,8 @@ runs:
           --configuration ${{ inputs.config }} \
           --error-format=json \
           ${{ inputs.paths }} \
-          --no-interaction > /tmp/phpstan-report.json 2>&1 || true
+          --no-interaction > /tmp/phpstan-report.json 2>&1
+        PHPSTAN_EXIT=$?
 
         if [ -s /tmp/phpstan-report.json ]; then
           echo "## PHPStan Findings"
@@ -62,3 +63,5 @@ runs:
         else
           echo "Sem erros PHPStan encontrados!"
         fi
+
+        exit $PHPSTAN_EXIT
