@@ -6,7 +6,7 @@ description: 'Cria issue no GitHub quando há falhas na pipeline e adiciona ao b
 #     with:
 #       app-id: ${{ secrets.APP_ID }}
 #       app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
-#       needs-json: ${{ toJSON(needs) }}
+#       needs-json: toJSON(needs)   # expressão avaliada no workflow
 
 inputs:
   app-id:
@@ -20,7 +20,7 @@ inputs:
     required: false
     default: '33'
   needs-json:
-    description: 'JSON dos resultados dos jobs — passe: ${{ toJSON(needs) }}'
+    description: 'JSON dos resultados dos jobs — passe toJSON(needs) no workflow'
     required: true
 
 runs:

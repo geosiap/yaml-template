@@ -46,16 +46,17 @@ runs:
         ${{ inputs.tool }} \
           --standard=${{ inputs.standard }} \
           --ignore=${{ inputs.ignore }} \
-          --report=full \
-          --report-file=/tmp/phpcs-report.txt \
           ${{ inputs.paths }}
         TOOL_EXIT=$?
 
-        if [ -s /tmp/phpcs-report.txt ]; then
-          echo "## Padrão ${{ inputs.standard }} Issues"
-          cat /tmp/phpcs-report.txt
-        else
-          echo "Nenhum issue de estilo encontrado!"
+        if [ "${{ inputs.tool }}" = "phpcbf" ]; then
+          echo ""
+          echo "=== Violações restantes (não corrigíveis automaticamente) ==="
+          phpcs \
+            --standard=${{ inputs.standard }} \
+            --ignore=${{ inputs.ignore }} \
+            --report=full \
+            ${{ inputs.paths }} || true
         fi
 
         if [ "${{ inputs.non-blocking }}" = "true" ]; then

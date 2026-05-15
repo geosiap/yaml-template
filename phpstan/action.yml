@@ -53,13 +53,15 @@ runs:
           --no-interaction > /tmp/phpstan-report.json 2>&1
         PHPSTAN_EXIT=$?
 
-        if [ -s /tmp/phpstan-report.json ]; then
-          echo "## PHPStan Findings"
-          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json 2>/dev/null || echo "?")
-          echo "Erros encontrados: **$ERRORS**"
+        if [ -s /tmp/phpstan-report.json ] && jq -e '.totals' /tmp/phpstan-report.json > /dev/null 2>&1; then
+          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json)
+          echo "PHPStan encontrou ${ERRORS} erro(s):"
           echo ""
-          echo "**Arquivos com issues:**"
-          jq -r '.files | keys[]' /tmp/phpstan-report.json 2>/dev/null | head -10
+          jq -r '.files | to_entries[] | .key as $file | .value.messages[] | "\($file):\(.line) — \(.message)"' \
+            /tmp/phpstan-report.json 2>/dev/null
+        elif [ $PHPSTAN_EXIT -ne 0 ]; then
+          echo "PHPStan falhou. Saída bruta:"
+          cat /tmp/phpstan-report.json
         else
           echo "Sem erros PHPStan encontrados!"
         fi
