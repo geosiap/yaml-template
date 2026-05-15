@@ -44,26 +44,8 @@ runs:
     - name: PHPStan — análise estática (level ${{ inputs.level }})
       shell: bash
       run: |
-        echo "Executando análise estática PHP (level ${{ inputs.level }})..."
         phpstan analyse \
           --level ${{ inputs.level }} \
           --configuration ${{ inputs.config }} \
-          --error-format=json \
           ${{ inputs.paths }} \
-          --no-interaction > /tmp/phpstan-report.json 2>&1
-        PHPSTAN_EXIT=$?
-
-        if [ -s /tmp/phpstan-report.json ] && jq -e '.totals' /tmp/phpstan-report.json > /dev/null 2>&1; then
-          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json)
-          echo "PHPStan encontrou ${ERRORS} erro(s):"
-          echo ""
-          jq -r '.files | to_entries[] | .key as $file | .value.messages[] | "\($file):\(.line) — \(.message)"' \
-            /tmp/phpstan-report.json 2>/dev/null
-        elif [ $PHPSTAN_EXIT -ne 0 ]; then
-          echo "PHPStan falhou. Saída bruta:"
-          cat /tmp/phpstan-report.json
-        else
-          echo "Sem erros PHPStan encontrados!"
-        fi
-
-        exit $PHPSTAN_EXIT
+          --no-interaction
