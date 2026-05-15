@@ -1,0 +1,11 @@
+name: 'Gitleaks Secret Scan'
+description: 'Detecção de secrets expostos no repositório com Gitleaks'
+# Requer checkout com fetch-depth: 0 no job que chama esta action
+
+runs:
+  using: composite
+  steps:
+    - name: Gitleaks — scan de secrets
+      uses: gitleaks/gitleaks-action@v1
+      env:
+        GITHUB_TOKEN: ${{ github.token }}

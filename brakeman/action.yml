@@ -1,0 +1,59 @@
+name: 'Brakeman SAST'
+description: 'Análise de segurança estática para Ruby on Rails com Brakeman (SQL Injection, XSS, Command Injection, etc.)'
+
+inputs:
+  ruby-version:
+    description: 'Versão do Ruby'
+    required: true
+  app-path:
+    description: 'Caminho da aplicação Rails'
+    required: false
+    default: './backend'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Ruby ${{ inputs.ruby-version }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        bundler-cache: false
+
+    - name: Instalar Brakeman
+      shell: bash
+      run: gem install brakeman --no-document
+
+    - name: Brakeman — SAST Ruby (SQL Injection, XSS, Command Injection, etc.)
+      shell: bash
+      run: |
+        echo "Executando Brakeman (SAST Ruby)..."
+        brakeman \
+          --format json \
+          --output /tmp/brakeman-report.json \
+          --no-progress \
+          "${{ inputs.app-path }}" || true
+
+        if [ -s /tmp/brakeman-report.json ]; then
+          WARNINGS=$(jq '.warnings | length' /tmp/brakeman-report.json 2>/dev/null || echo "0")
+          echo "## Brakeman Security Findings"
+          echo "Total de warnings: **$WARNINGS**"
+          echo ""
+          echo "**Warnings por tipo:**"
+          jq -r '.warnings[] | .warning_type' /tmp/brakeman-report.json 2>/dev/null \
+            | sort | uniq -c | sort -rn | head -15
+
+          if [ "$WARNINGS" -gt 0 ]; then
+            echo ""
+            echo "Erro: Encontrados $WARNINGS warnings de segurança."
+            exit 1
+          fi
+        else
+          echo "Nenhum finding de segurança detectado pelo Brakeman"
+        fi
+
+    - name: Upload Brakeman Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: brakeman-report
+        path: /tmp/brakeman-report.json

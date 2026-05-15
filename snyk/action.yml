@@ -1,0 +1,26 @@
+name: 'Snyk Dependency Scan'
+description: 'Scan de vulnerabilidades nas dependências com Snyk CLI'
+
+inputs:
+  token:
+    description: 'Token de autenticação Snyk (SNYK_TOKEN)'
+    required: true
+  args:
+    description: 'Argumentos adicionais para snyk test'
+    required: false
+    default: '--all-projects --no-monitor'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Snyk CLI
+      shell: bash
+      run: npm install -g snyk
+
+    - name: Autenticar no Snyk
+      shell: bash
+      run: snyk auth "${{ inputs.token }}"
+
+    - name: Snyk — scan de vulnerabilidades nas dependências
+      shell: bash
+      run: snyk test ${{ inputs.args }}

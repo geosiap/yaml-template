@@ -1,0 +1,29 @@
+name: 'Semgrep SAST'
+description: 'Análise de segurança estática (SAST) com Semgrep — suporta PHP, Ruby, Python e mais'
+
+inputs:
+  configs:
+    description: 'Configs Semgrep separadas por espaço (ex: "p/php p/owasp-top-ten")'
+    required: true
+  path:
+    description: 'Caminho a analisar'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Semgrep
+      shell: bash
+      run: pip install semgrep
+
+    - name: Semgrep — SAST (${{ inputs.configs }})
+      shell: bash
+      run: |
+        CONFIG_FLAGS=$(echo "${{ inputs.configs }}" | tr ' ' '\n' | sed 's/^/--config /' | tr '\n' ' ')
+        semgrep scan \
+          ${CONFIG_FLAGS} \
+          --metrics=off \
+          --error \
+          --text \
+          "${{ inputs.path }}"

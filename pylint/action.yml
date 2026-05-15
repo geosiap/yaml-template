@@ -1,0 +1,99 @@
+name: 'Pylint Static Analysis'
+description: 'Análise estática Python com Pylint — detecta erros, código morto e padrões problemáticos'
+
+inputs:
+  python-version:
+    description: 'Versão do Python'
+    required: false
+    default: '3.11'
+  requirements-file:
+    description: 'Arquivo de dependências para instalar antes da análise'
+    required: false
+    default: 'requirements.txt'
+  disable-categories:
+    description: 'Categorias a desabilitar (C=convention, R=refactor, W=warning, E=error, F=fatal)'
+    required: false
+    default: 'C,R'
+  fail-on:
+    description: 'Quando falhar: "errors" (apenas E/F) ou "all" (E/F/W)'
+    required: false
+    default: 'all'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar dependências + Pylint
+      shell: bash
+      run: |
+        pip install --upgrade pip
+        if [ -f "${{ inputs.requirements-file }}" ]; then
+          pip install -r "${{ inputs.requirements-file }}"
+        fi
+        pip install pylint
+
+    - name: Pylint — análise estática Python
+      shell: bash
+      run: |
+        echo "Executando Pylint..."
+        PY_FILES=$(find . -name "*.py" -not -path "./.git/*" -not -path "./__pycache__/*")
+
+        pylint \
+          --output-format=json \
+          --disable=${{ inputs.disable-categories }} \
+          ${PY_FILES} > /tmp/pylint-report.json 2>&1 || true
+
+        if [ -s /tmp/pylint-report.json ]; then
+          ERRORS=$(python3 -c "
+        import json, sys
+        try:
+          data = json.load(open('/tmp/pylint-report.json'))
+          print(len([m for m in data if m['type'] in ['error','fatal']]))
+        except: print('0')
+        " 2>/dev/null || echo "0")
+          WARNINGS=$(python3 -c "
+        import json, sys
+        try:
+          data = json.load(open('/tmp/pylint-report.json'))
+          print(len([m for m in data if m['type'] == 'warning']))
+        except: print('0')
+        " 2>/dev/null || echo "0")
+
+          echo "## Pylint Findings"
+          echo "Erros (E/F): **$ERRORS** | Warnings (W): **$WARNINGS**"
+          echo ""
+          echo "**Arquivos com issues:**"
+          python3 -c "
+        import json
+        try:
+          data = json.load(open('/tmp/pylint-report.json'))
+          files = sorted(set(m['path'] for m in data if m['type'] in ['error','fatal','warning']))
+          [print(f) for f in files[:10]]
+        except: pass
+        " 2>/dev/null
+
+          if [ "${{ inputs.fail-on }}" = "errors" ]; then
+            FAIL_COUNT="${ERRORS}"
+          else
+            FAIL_COUNT=$((ERRORS + WARNINGS))
+          fi
+
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo ""
+            echo "Erro: Encontrados $ERRORS erros e $WARNINGS warnings na análise estática."
+            exit 1
+          fi
+        else
+          echo "Sem findings Pylint encontrados!"
+        fi
+
+    - name: Upload Pylint Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pylint-report
+        path: /tmp/pylint-report.json

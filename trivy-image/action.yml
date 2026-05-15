@@ -1,0 +1,59 @@
+name: 'Trivy Image Scan'
+description: 'Scan de CVEs em imagem Docker publicada no registry'
+
+inputs:
+  image:
+    description: 'Referência completa da imagem (ex: registry/projeto:tag)'
+    required: true
+  severity:
+    description: 'Severidades a reportar (separadas por vírgula)'
+    required: false
+    default: 'CRITICAL,HIGH,MEDIUM'
+  docker-login:
+    description: 'Usuário do Docker registry'
+    required: true
+  docker-password:
+    description: 'Senha do Docker registry'
+    required: true
+  artifact-name:
+    description: 'Nome do artefato de relatório (use valor único quando há múltiplas imagens)'
+    required: false
+    default: 'trivy-image-report'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Trivy CLI
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y wget apt-transport-https gnupg
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update -qq
+        sudo apt-get install -y trivy
+
+    - name: Login no Docker registry
+      shell: bash
+      run: |
+        echo "${{ inputs.docker-password }}" \
+          | docker login --username "${{ inputs.docker-login }}" --password-stdin
+
+    - name: Trivy — scan de CVEs na imagem Docker
+      shell: bash
+      run: |
+        trivy image \
+          --severity "${{ inputs.severity }}" \
+          --exit-code 1 \
+          --format table \
+          --output /tmp/trivy-image-report.txt \
+          "${{ inputs.image }}"
+
+    - name: Upload Trivy Image Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: /tmp/trivy-image-report.txt

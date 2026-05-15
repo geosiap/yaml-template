@@ -1,0 +1,21 @@
+name: 'Hadolint Dockerfile Lint'
+description: 'Validação de sintaxe e boas práticas do Dockerfile com Hadolint'
+
+inputs:
+  dockerfile:
+    description: 'Caminho do Dockerfile a validar'
+    required: false
+    default: 'Dockerfile'
+  ignore:
+    description: 'Regras a ignorar (separadas por vírgula)'
+    required: false
+    default: 'DL3008,DL3009,DL3015,DL3020,DL3059,SC2016'
+
+runs:
+  using: composite
+  steps:
+    - name: Hadolint — valida Dockerfile
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile }}
+        ignore: ${{ inputs.ignore }}

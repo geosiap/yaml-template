@@ -1,0 +1,64 @@
+name: 'PHPStan Static Analysis'
+description: 'Análise estática PHP com PHPStan'
+
+inputs:
+  php-version:
+    description: 'Versão do PHP'
+    required: false
+    default: '8.2'
+  php-extensions:
+    description: 'Extensões PHP adicionais (separadas por vírgula)'
+    required: false
+    default: ''
+  level:
+    description: 'Nível de rigor do PHPStan (0-9)'
+    required: false
+    default: '3'
+  config:
+    description: 'Arquivo de configuração do PHPStan'
+    required: false
+    default: 'phpstan.neon'
+  paths:
+    description: 'Caminhos a analisar (separados por espaço)'
+    required: true
+  install-composer:
+    description: 'Instalar dependências via Composer antes da análise'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar PHP ${{ inputs.php-version }} + PHPStan
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.php-extensions }}
+        tools: phpstan
+
+    - name: Instalar dependências via Composer
+      if: ${{ inputs.install-composer == 'true' }}
+      shell: bash
+      run: composer install --prefer-dist --no-interaction --no-progress
+
+    - name: PHPStan — análise estática (level ${{ inputs.level }})
+      shell: bash
+      run: |
+        echo "Executando análise estática PHP (level ${{ inputs.level }})..."
+        phpstan analyse \
+          --level ${{ inputs.level }} \
+          --configuration ${{ inputs.config }} \
+          --error-format=json \
+          ${{ inputs.paths }} \
+          --no-interaction > /tmp/phpstan-report.json 2>&1 || true
+
+        if [ -s /tmp/phpstan-report.json ]; then
+          echo "## PHPStan Findings"
+          ERRORS=$(jq '.totals.errors' /tmp/phpstan-report.json 2>/dev/null || echo "?")
+          echo "Erros encontrados: **$ERRORS**"
+          echo ""
+          echo "**Arquivos com issues:**"
+          jq -r '.files | keys[]' /tmp/phpstan-report.json 2>/dev/null | head -10
+        else
+          echo "Sem erros PHPStan encontrados!"
+        fi

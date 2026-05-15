@@ -1,0 +1,186 @@
+name: 'Pipeline Report'
+description: 'Cria issue no GitHub quando há falhas na pipeline e adiciona ao board do projeto'
+# Requer checkout no job que chama esta action (para gh CLI encontrar contexto do repositório)
+# Uso no workflow:
+#   - uses: geosiap/yaml-template/report@main
+#     with:
+#       app-id: ${{ secrets.APP_ID }}
+#       app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+#       needs-json: ${{ toJSON(needs) }}
+
+inputs:
+  app-id:
+    description: 'ID da GitHub App para geração de token'
+    required: true
+  app-private-key:
+    description: 'Chave privada da GitHub App'
+    required: true
+  board-number:
+    description: 'Número do board (GitHub Project V2)'
+    required: false
+    default: '33'
+  needs-json:
+    description: 'JSON dos resultados dos jobs — passe: ${{ toJSON(needs) }}'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Gerar token da GitHub App
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ github.repository_owner }}
+
+    - name: Verificar falhas e criar issue no GitHub
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN_PROJECT: ${{ steps.app-token.outputs.token }}
+        NEEDS_JSON: ${{ inputs.needs-json }}
+        BOARD_NUMBER: ${{ inputs.board-number }}
+      run: |
+        # Verifica se há falhas — sai silenciosamente se nenhum job falhou
+        HAS_FAILURE=$(echo "${NEEDS_JSON}" | jq -r '[to_entries[] | select(.value.result == "failure")] | length > 0')
+
+        if [ "${HAS_FAILURE}" != "true" ]; then
+          echo "Nenhuma falha detectada — nenhuma ação necessária"
+          exit 0
+        fi
+
+        # Constrói resumo de jobs com falha (um por linha)
+        FAILED=$(echo "${NEEDS_JSON}" | jq -r \
+          'to_entries[] | select(.value.result == "failure") | "- ❌ **\(.key)**"')
+
+        # Constrói tabela de status completo (todos os jobs)
+        STATUS_TABLE=$(echo "${NEEDS_JSON}" | jq -r \
+          'to_entries[] | "| \(.key) | \(.value.result) |"')
+
+        TITLE="🚨 Pipeline Issues Detectadas | branch: ${{ github.ref_name }}"
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        # ── Passo 1: busca dados do board via GraphQL ──────────────────────────
+        PROJECT_DATA=$(GH_TOKEN="${GH_TOKEN_PROJECT}" gh api graphql -f query='
+          query {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: ${{ inputs.board-number }}) {
+                id
+                field(name: "Status") {
+                  ... on ProjectV2SingleSelectField {
+                    id
+                    options { id name }
+                  }
+                }
+                items(first: 100) {
+                  nodes {
+                    id
+                    content {
+                      ... on Issue { title }
+                      ... on DraftIssue { title }
+                    }
+                  }
+                }
+              }
+            }
+          }')
+
+        echo "GraphQL response: ${PROJECT_DATA}"
+
+        if echo "${PROJECT_DATA}" | jq -e '.data.organization.projectV2 == null' > /dev/null 2>&1; then
+          echo "ERRO: PROJECT_TOKEN sem acesso ao board #${BOARD_NUMBER}. Verifique o token em Settings → Secrets"
+          exit 1
+        fi
+
+        PROJECT_ID=$(echo "${PROJECT_DATA}" | jq -r '.data.organization.projectV2.id')
+        FIELD_ID=$(echo "${PROJECT_DATA}"   | jq -r '.data.organization.projectV2.field.id')
+        OPTION_ID=$(echo "${PROJECT_DATA}"  | jq -r \
+          '(.data.organization.projectV2.field.options // [])[] | select(.name == "Security issues") | .id')
+
+        BOARD_EXISTING=$(echo "${PROJECT_DATA}" | jq -r \
+          --arg title "${TITLE}" \
+          '[.data.organization.projectV2.items.nodes[] | select(.content.title == $title)] | length')
+
+        echo "Project ID: ${PROJECT_ID} | Field ID: ${FIELD_ID} | Option ID: ${OPTION_ID}"
+        echo "Itens existentes no board com este título: ${BOARD_EXISTING}"
+
+        if [ "${BOARD_EXISTING}" -eq "0" ]; then
+
+          # ── Passo 2: cria ou reutiliza a issue no repositório ─────────────────
+          EXISTING_ISSUE=$(GH_TOKEN="${GH_TOKEN_PROJECT}" gh api \
+            "repos/${{ github.repository }}/issues?state=open&labels=ci-failure&per_page=100" \
+            --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].html_url // \"\"" 2>/dev/null || echo "")
+
+          if [ -z "${EXISTING_ISSUE}" ]; then
+            GH_TOKEN="${GH_TOKEN_PROJECT}" gh api \
+              "repos/${{ github.repository }}/labels" \
+              --method POST \
+              --field name="ci-failure" \
+              --field color="d73a4a" \
+              --field description="Falha na pipeline de CI" 2>/dev/null || true
+
+            BODY=$(printf \
+              "## 🚨 Falha Detectada na Pipeline CI\n\n### 📊 Resumo\n| Item | Valor |\n|---|---|\n| **Branch** | \`%s\` |\n| **Commit** | \`%s\` |\n| **Autor** | @%s |\n| **Timestamp** | %s |\n| **Run ID** | #%s |\n\n### ❌ Jobs com Falha\n%s\n\n### 📋 Status Completo dos Jobs\n| Job | Status |\n|---|---|\n%s\n\n### 🔗 Links Úteis\n- [Ver Execução Completa](%s)\n- [Commit no GitHub](%s/commit/%s)\n- [Autor do Commit](%s)\n\n### 💡 Próximos Passos\n1. Verifique os erros na [execução completa](%s)\n2. Corrija os problemas reportados\n3. Faça novo push para disparar a pipeline novamente\n\n---\n> Gerado automaticamente pelo GitHub Actions" \
+              "${{ github.ref_name }}" \
+              "${{ github.sha }}" \
+              "${{ github.actor }}" \
+              "$(date '+%Y-%m-%d %H:%M:%S UTC')" \
+              "${{ github.run_id }}" \
+              "${FAILED}" \
+              "${STATUS_TABLE}" \
+              "${RUN_URL}" \
+              "${{ github.server_url }}" \
+              "${{ github.sha }}" \
+              "${{ github.server_url }}/${{ github.actor }}" \
+              "${RUN_URL}")
+
+            ISSUE_URL=$(jq -n \
+              --arg title "${TITLE}" \
+              --arg body "${BODY}" \
+              '{"title": $title, "body": $body, "labels": ["ci-failure"]}' | \
+              GH_TOKEN="${GH_TOKEN_PROJECT}" gh api \
+              "repos/${{ github.repository }}/issues" \
+              --method POST \
+              --input - \
+              --jq '.html_url')
+
+            echo "Issue criada: ${ISSUE_URL}"
+          else
+            ISSUE_URL="${EXISTING_ISSUE}"
+            echo "Issue já existe, reutilizando: ${ISSUE_URL}"
+          fi
+
+          # ── Passo 3: adiciona a issue ao board ────────────────────────────────
+          ISSUE_NUMBER=$(echo "${ISSUE_URL}" | grep -oE '[0-9]+$')
+          ISSUE_NODE_ID=$(GH_TOKEN="${GH_TOKEN_PROJECT}" gh api \
+            "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}" \
+            --jq '.node_id')
+
+          ITEM_ID=$(GH_TOKEN="${GH_TOKEN_PROJECT}" gh api graphql -f query="
+            mutation {
+              addProjectV2ItemById(input: {
+                projectId: \"${PROJECT_ID}\"
+                contentId: \"${ISSUE_NODE_ID}\"
+              }) {
+                item { id }
+              }
+            }" --jq '.data.addProjectV2ItemById.item.id')
+
+          echo "Item adicionado ao board: ${ITEM_ID}"
+
+          # ── Passo 4: move para a coluna "Security issues" ─────────────────────
+          GH_TOKEN="${GH_TOKEN_PROJECT}" gh api graphql -f query="
+            mutation {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: \"${PROJECT_ID}\"
+                itemId: \"${ITEM_ID}\"
+                fieldId: \"${FIELD_ID}\"
+                value: { singleSelectOptionId: \"${OPTION_ID}\" }
+              }) { projectV2Item { id } }
+            }"
+
+          echo "Item movido para a coluna 'Security issues' no board #${BOARD_NUMBER}"
+        else
+          echo "Item já existe no board com este título — nenhuma ação necessária"
+        fi

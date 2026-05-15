@@ -1,0 +1,64 @@
+name: 'Flake8 PEP 8 Style Check'
+description: 'Verificação de estilo de código Python (PEP 8) com Flake8'
+
+inputs:
+  python-version:
+    description: 'Versão do Python'
+    required: false
+    default: '3.11'
+  max-line-length:
+    description: 'Comprimento máximo de linha'
+    required: false
+    default: '120'
+  exclude:
+    description: 'Caminhos a excluir (separados por vírgula)'
+    required: false
+    default: '.git,__pycache__,*.egg-info,.env'
+  path:
+    description: 'Caminho a verificar'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar Flake8
+      shell: bash
+      run: pip install flake8
+
+    - name: Flake8 — verifica estilo PEP 8
+      shell: bash
+      run: |
+        echo "Executando Flake8 (PEP 8 style check)..."
+        flake8 \
+          --max-line-length=${{ inputs.max-line-length }} \
+          --exclude=${{ inputs.exclude }} \
+          --format=default \
+          --output-file=/tmp/flake8-report.txt \
+          "${{ inputs.path }}" || true
+
+        if [ -s /tmp/flake8-report.txt ]; then
+          ISSUES=$(wc -l < /tmp/flake8-report.txt)
+          echo "## PEP 8 Code Style Issues"
+          echo "Total de issues: **$ISSUES**"
+          echo ""
+          echo "**Primeiros findings:**"
+          head -20 /tmp/flake8-report.txt
+          echo ""
+          echo "Erro: Encontradas $ISSUES violações de estilo PEP 8."
+          exit 1
+        else
+          echo "Sem issues PEP 8 encontrados!"
+        fi
+
+    - name: Upload Flake8 Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: flake8-report
+        path: /tmp/flake8-report.txt

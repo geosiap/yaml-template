@@ -1,0 +1,89 @@
+name: 'Bandit Python SAST'
+description: 'Análise de segurança estática para Python com Bandit (SQL Injection, Command Injection, weak crypto, etc.)'
+
+inputs:
+  python-version:
+    description: 'Versão do Python'
+    required: false
+    default: '3.11'
+  severity-level:
+    description: 'Nível mínimo de severidade: -l (low+), -ll (medium+), -lll (high apenas)'
+    required: false
+    default: '-ll'
+  exclude:
+    description: 'Caminhos a excluir (separados por vírgula)'
+    required: false
+    default: '.git,__pycache__'
+  path:
+    description: 'Caminho a analisar'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar Bandit
+      shell: bash
+      run: pip install bandit
+
+    - name: Bandit — SAST Python (SQL Injection, Command Injection, etc.)
+      shell: bash
+      run: |
+        echo "Executando Bandit (SAST Python)..."
+        bandit \
+          -r "${{ inputs.path }}" \
+          --format json \
+          --output /tmp/bandit-report.json \
+          --exclude "${{ inputs.exclude }}" \
+          ${{ inputs.severity-level }} || true
+
+        if [ -s /tmp/bandit-report.json ]; then
+          HIGH=$(python3 -c "
+        import json
+        try:
+          d = json.load(open('/tmp/bandit-report.json'))
+          print(len([r for r in d.get('results',[]) if r['issue_severity']=='HIGH']))
+        except: print('0')
+        " 2>/dev/null || echo "0")
+          MEDIUM=$(python3 -c "
+        import json
+        try:
+          d = json.load(open('/tmp/bandit-report.json'))
+          print(len([r for r in d.get('results',[]) if r['issue_severity']=='MEDIUM']))
+        except: print('0')
+        " 2>/dev/null || echo "0")
+
+          echo "## Bandit Security Findings"
+          echo "HIGH: **$HIGH** | MEDIUM: **$MEDIUM**"
+          echo ""
+          echo "**Issues por tipo:**"
+          python3 -c "
+        import json
+        from collections import Counter
+        try:
+          d = json.load(open('/tmp/bandit-report.json'))
+          counts = Counter(r['test_name'] for r in d.get('results',[]))
+          [print(f'  {v:3d}x {k}') for k, v in sorted(counts.items(), key=lambda x: -x[1])[:10]]
+        except: pass
+        " 2>/dev/null
+
+          if [ "$HIGH" -gt 0 ] || [ "$MEDIUM" -gt 0 ]; then
+            echo ""
+            echo "Erro: Encontrados $HIGH HIGH e $MEDIUM MEDIUM findings de segurança."
+            exit 1
+          fi
+        else
+          echo "Nenhum finding de segurança detectado pelo Bandit"
+        fi
+
+    - name: Upload Bandit Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bandit-report
+        path: /tmp/bandit-report.json

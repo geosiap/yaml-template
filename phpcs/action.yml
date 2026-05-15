@@ -1,0 +1,65 @@
+name: 'PHPCS / PHPCBF Code Style'
+description: 'Verificação de padrão de código PHP (PSR-12) com PHPCS ou PHPCBF'
+
+inputs:
+  php-version:
+    description: 'Versão do PHP'
+    required: false
+    default: '8.2'
+  php-extensions:
+    description: 'Extensões PHP adicionais (separadas por vírgula)'
+    required: false
+    default: ''
+  paths:
+    description: 'Caminhos a verificar (separados por espaço)'
+    required: true
+  standard:
+    description: 'Padrão de código (ex: PSR12)'
+    required: false
+    default: 'PSR12'
+  ignore:
+    description: 'Diretórios a ignorar (separados por vírgula)'
+    required: false
+    default: 'vendor,_vendors,_cache,_logs,storage,bootstrap/cache'
+  tool:
+    description: 'Ferramenta a usar: phpcs (verificação) ou phpcbf (relatório de correções)'
+    required: false
+    default: 'phpcs'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar PHP ${{ inputs.php-version }} + ${{ inputs.tool }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.php-extensions }}
+        tools: ${{ inputs.tool }}
+
+    - name: ${{ inputs.tool }} — verifica padrão ${{ inputs.standard }}
+      shell: bash
+      run: |
+        PHP_FILES=$(find . \
+          $(echo "${{ inputs.paths }}" | tr ' ' '\n' | sed 's/^/\//') \
+          -name "*.php" \
+          $(echo "${{ inputs.ignore }}" | tr ',' '\n' | sed 's/^/-not -path "*\//;s/$\/*"/' ) \
+          2>/dev/null || true)
+
+        # Fallback: usa os paths diretamente se find falhar
+        if [ -z "$PHP_FILES" ]; then
+          PHP_FILES="${{ inputs.paths }}"
+        fi
+
+        ${{ inputs.tool }} \
+          --standard=${{ inputs.standard }} \
+          --ignore=${{ inputs.ignore }} \
+          --report=full \
+          --report-file=/tmp/phpcs-report.txt \
+          ${{ inputs.paths }} || true
+
+        if [ -s /tmp/phpcs-report.txt ]; then
+          echo "## Padrão ${{ inputs.standard }} Issues"
+          cat /tmp/phpcs-report.txt
+        else
+          echo "Nenhum issue de estilo encontrado!"
+        fi

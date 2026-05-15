@@ -1,0 +1,104 @@
+name: 'RuboCop Static Analysis'
+description: 'Análise estática e padrão de código Ruby com RuboCop'
+
+inputs:
+  ruby-version:
+    description: 'Versão do Ruby (use versão exata se o Gemfile exigir, ex: "3.1.0")'
+    required: true
+  system-deps:
+    description: 'Dependências de sistema a instalar via apt (ex: "libpq-dev" ou "firebird-dev")'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Diretório da aplicação Ruby'
+    required: false
+    default: 'backend'
+  use-bundler:
+    description: 'Usar bundle exec rubocop (true) ou gem install rubocop (false)'
+    required: false
+    default: 'true'
+  gem-extensions:
+    description: 'Gems RuboCop extras a instalar quando use-bundler=false (ex: "rubocop-rails rubocop-performance")'
+    required: false
+    default: ''
+  lib-token:
+    description: 'Token para rubygems privadas (@geosiap) — necessário quando use-bundler=true e há gems privadas'
+    required: false
+    default: ''
+  fail-on:
+    description: 'Quando falhar: "errors-only" (apenas error/fatal) ou "any" (qualquer offense)'
+    required: false
+    default: 'errors-only'
+
+runs:
+  using: composite
+  steps:
+    - name: Instalar dependências do sistema
+      if: ${{ inputs.system-deps != '' }}
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y ${{ inputs.system-deps }}
+
+    - name: Instalar Ruby ${{ inputs.ruby-version }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        bundler-cache: ${{ inputs.use-bundler }}
+        working-directory: ${{ inputs.working-directory }}
+      env:
+        BUNDLE_RUBYGEMS__PKG__GITHUB__COM: ${{ inputs.lib-token != '' && format('x-oauth-basic:{0}', inputs.lib-token) || '' }}
+
+    - name: Instalar RuboCop via gem
+      if: ${{ inputs.use-bundler == 'false' }}
+      shell: bash
+      run: gem install rubocop ${{ inputs.gem-extensions }} --no-document
+
+    - name: RuboCop — análise estática + padrão de código Ruby
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "Executando RuboCop..."
+
+        RUBOCOP_CMD="rubocop"
+        if [ "${{ inputs.use-bundler }}" = "true" ]; then
+          RUBOCOP_CMD="bundle exec rubocop"
+        fi
+
+        ${RUBOCOP_CMD} \
+          --format json \
+          --out /tmp/rubocop-report.json || true
+
+        if [ -s /tmp/rubocop-report.json ]; then
+          TOTAL=$(jq '.summary.offense_count' /tmp/rubocop-report.json 2>/dev/null || echo "0")
+          FILES=$(jq '.summary.target_file_count' /tmp/rubocop-report.json 2>/dev/null || echo "0")
+
+          if [ "${{ inputs.fail-on }}" = "errors-only" ]; then
+            FAIL_COUNT=$(jq '[.files[].offenses[] | select(.severity == "error" or .severity == "fatal")] | length' \
+              /tmp/rubocop-report.json 2>/dev/null || echo "0")
+            echo "Total: **$TOTAL** offenses (críticos: **$FAIL_COUNT**) | Arquivos: **$FILES**"
+          else
+            FAIL_COUNT="${TOTAL}"
+            echo "Total: **$TOTAL** offenses | Arquivos: **$FILES**"
+          fi
+
+          echo ""
+          echo "**Arquivos com issues (Top 10):**"
+          jq -r '.files[] | select(.offenses | length > 0) | .path' /tmp/rubocop-report.json 2>/dev/null | head -10
+
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo ""
+            echo "Erro: Encontrados $FAIL_COUNT issues no RuboCop."
+            exit 1
+          else
+            echo ""
+            echo "$TOTAL infrações de estilo (convention/warning/refactor) — não bloqueiam."
+          fi
+        else
+          echo "Sem findings RuboCop encontrados!"
+        fi
+
+    - name: Upload RuboCop Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rubocop-report
+        path: /tmp/rubocop-report.json
