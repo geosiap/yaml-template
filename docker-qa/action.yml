@@ -29,6 +29,12 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Set QA image tag
+      shell: bash
+      run: |
+        TAG="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-qa-latest"
+        echo "QA_IMAGE_TAG=$(echo "$TAG" | tr -d '[:space:]')" >> $GITHUB_ENV
+
     - name: Docker Setup Buildx
       uses: docker/setup-buildx-action@v2.6.0
 
@@ -50,12 +56,11 @@ runs:
           BRANCH_NAME=${{ inputs.git_branch }}
           LIB_TOKEN=${{ inputs.lib_token }}
         labels: |
-          --label source-branch=${{ github.ref_name }}
-          --label build-commit=${{ github.sha }}
-          --label repository=${{ github.repository }}
-          --label source-build=github
-        tags: |
-          ${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-qa-latest
+          source-branch=${{ github.ref_name }}
+          build-commit=${{ github.sha }}
+          repository=${{ github.repository }}
+          source-build=github
+        tags: ${{ env.QA_IMAGE_TAG }}
         push: true
 
   # Exemplo de uso:
