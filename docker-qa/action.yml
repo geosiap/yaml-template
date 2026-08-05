@@ -25,6 +25,9 @@ inputs:
   lib_token:
     description: "Token para acessar libs privadas"
     required: true
+  tag_suffix:
+    description: "Sufixo da tag da imagem"
+    default: "qa-latest"
 
 runs:
   using: "composite"
@@ -32,7 +35,7 @@ runs:
     - name: Set QA image tag
       shell: bash
       run: |
-        TAG="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-qa-latest"
+        TAG="${{ inputs.registry_name }}/${{ inputs.project_name }}:${{ inputs.docker_back_front }}-${{ inputs.tag_suffix }}"
         echo "QA_IMAGE_TAG=$(echo "$TAG" | tr -d '[:space:]')" >> $GITHUB_ENV
 
     - name: Docker Setup Buildx
