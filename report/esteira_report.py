@@ -174,6 +174,24 @@ def p_flake8_text(text):
     return out
 
 
+def p_lint_text(text):
+    """TSLint verbose ("ERROR: (regra) arquivo[l, c]: msg") e ESLint/ng lint stylish
+    (linha com o arquivo, depois "  l:c  error  msg  regra") -> "regra | arquivo"."""
+    out, current = set(), ""
+    for line in text.splitlines():
+        m = re.match(r"^(?:ERROR|WARNING): \(([\w@/-]+)\) (\S+?)\[\d+, \d+\]", line)
+        if m:
+            out.add(f"{m.group(1)} | {m.group(2)}")
+            continue
+        if re.match(r"^\S.*\.(ts|html|js)$", line.strip()) and not line.startswith(" "):
+            current = line.strip()
+            continue
+        m = re.match(r"^\s+\d+:\d+\s+(error|warning)\s+.*?\s{2,}([\w@/-]+)\s*$", line)
+        if m and current:
+            out.add(f"{m.group(2)} | {current}")
+    return out
+
+
 def p_generic_text(text):
     """Fallback: linhas sem números (número de linha/coluna não entra no fingerprint)."""
     out = set()
@@ -196,6 +214,8 @@ def findings_from_artifact(job, art_dir):
             found |= p_trivy_text(text)
         elif job.startswith("flake8"):
             found |= p_flake8_text(text)
+        elif job.startswith(("lint", "eslint", "tslint")):
+            found |= p_lint_text(text) or p_generic_text(text)
         else:
             found |= p_generic_text(text)
     # caminho absoluto do runner (/home/runner/work/<repo>/<repo>/) não entra no achado

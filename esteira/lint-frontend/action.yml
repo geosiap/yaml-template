@@ -38,17 +38,26 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: |
         set -o pipefail
+        # Relatório só com a saída do linter (stdout); stack traces (stderr) vão para o log à parte —
+        # misturar os dois gerava linhas "costuradas" diferentes a cada run e instabilizava o fingerprint.
+        run_lint() { "$@" 2>/tmp/lint-frontend-stderr.txt | tee /tmp/lint-frontend-report.txt; }
+        RC=0
         if grep -q '"lint"' angular.json 2>/dev/null; then
-          npx ng lint 2>&1 | tee /tmp/lint-frontend-report.txt
+          run_lint npx ng lint || RC=$?
         elif ls .eslintrc* eslint.config.* >/dev/null 2>&1; then
-          npx eslint . --ext .ts,.html 2>&1 | tee /tmp/lint-frontend-report.txt
+          run_lint npx eslint . --ext .ts,.html || RC=$?
         elif [ -f tslint.json ]; then
-          npx tslint -c tslint.json -p tsconfig.json --format verbose 2>&1 | tee /tmp/lint-frontend-report.txt
+          run_lint npx tslint -c tslint.json -p tsconfig.json --format verbose || RC=$?
         else
           echo "Nenhuma configuração de lint encontrada" | tee /tmp/lint-frontend-report.txt
           exit 1
         fi
-
+        if [ -s /tmp/lint-frontend-stderr.txt ]; then
+          echo "::group::stderr do linter (erros de execução — não entram no relatório)"
+          cat /tmp/lint-frontend-stderr.txt
+          echo "::endgroup::"
+        fi
+        exit $RC
     - name: Upload lint-frontend-report
       if: always()
       uses: actions/upload-artifact@v4
