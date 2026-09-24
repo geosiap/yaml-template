@@ -1,0 +1,44 @@
+name: 'Esteira — Snyk'
+description: 'Vulnerabilidades nas dependências (snyk test); artefato snyk-report (JSON).'
+# Projetos pip: passe python-requirements — o Snyk resolve os pacotes a partir do ambiente instalado.
+inputs:
+  token:
+    description: 'SNYK_TOKEN'
+    required: true
+  args:
+    required: false
+    default: '--all-projects'
+  python-requirements:
+    description: 'requirements.txt a instalar antes (só projetos Python)'
+    required: false
+    default: ''
+  python-version:
+    required: false
+    default: '3.11'
+runs:
+  using: composite
+  steps:
+    - name: Instalar Python ${{ inputs.python-version }}
+      if: ${{ inputs.python-requirements != '' }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Instalar dependências Python
+      if: ${{ inputs.python-requirements != '' }}
+      shell: bash
+      run: pip install -r "${{ inputs.python-requirements }}"
+    - name: Snyk — vulnerabilidades nas dependências
+      shell: bash
+      env:
+        SNYK_TOKEN: ${{ inputs.token }}
+      run: |
+        npm install -g snyk
+        snyk test ${{ inputs.args }} --json-file-output=/tmp/snyk-report.json
+
+    - name: Upload snyk-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: snyk-report
+        path: /tmp/snyk-report.json
+        if-no-files-found: ignore

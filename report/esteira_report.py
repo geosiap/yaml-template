@@ -206,7 +206,52 @@ def findings_from_artifact(job, art_dir):
 
 def run_jobs():
     jobs = call("GET", f"/repos/{REPO}/actions/runs/{RUN_ID}/attempts/{RUN_ATTEMPT}/jobs?per_page=100", RUN_TOKEN)
-    return {j["name"]: j for j in jobs.get("jobs", [])}
+    out = {}
+    for j in jobs.get("jobs", []):
+        out[j["name"]] = j
+        out.setdefault(j["name"].split(" / ")[-1], j)  # job de reusable workflow: "<caller> / <job>"
+    return out
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def job_error_lines(job_info, limit=5):
+    """Últimas linhas de erro do log do job (sem timestamp/ANSI/números), para quando não há artefato.
+    O endpoint de logs redireciona para um storage que não aceita o header Authorization: segue sem ele."""
+    if not job_info:
+        return []
+    req = urllib.request.Request(f"{API}/repos/{REPO}/actions/jobs/{job_info['id']}/logs", headers={
+        "Authorization": f"Bearer {RUN_TOKEN}", "Accept": "application/vnd.github+json"})
+    try:
+        urllib.request.build_opener(_NoRedirect).open(req)
+        return []
+    except urllib.error.HTTPError as e:
+        if e.code not in (301, 302, 303, 307, 308):
+            print(f"    aviso: log do job indisponível (HTTP {e.code})")
+            return []
+        location = e.headers.get("Location")
+    try:
+        with urllib.request.urlopen(location) as r:
+            text = r.read().decode(errors="replace")
+    except Exception as e:  # noqa: BLE001 — log é complemento, nunca derruba o report
+        print(f"    aviso: falha ao baixar log do job ({e})")
+        return []
+    picked = []
+    for raw in text.splitlines():
+        if "\x1b[36;1m" in raw:  # eco do script (não é saída)
+            continue
+        line = re.sub(r"\x1b\[[0-9;]*m", "", re.sub(r"^\S+Z ", "", raw)).strip()
+        if not re.search(r"\b(ERROR|Error|error:|FATAL|Fatal)\b|##\[error\]", line):
+            continue
+        if "Process completed with exit code" in line:
+            continue
+        norm = re.sub(r"\d+", "#", line.replace("##[error]", "")).strip()[:200]
+        if norm and norm not in picked:
+            picked.append(norm)
+    return picked[-limit:]
 
 
 def run_artifacts():
@@ -292,12 +337,16 @@ def handle(job, job_info, artifact, findings, source):
     labels = ["ci-failure", label] + (["esteira:erro-novo"] if previous else [])
     if previous:
         ensure_label("esteira:erro-novo")
+    job_url = (job_info or {}).get("html_url", RUN_URL)
+    next_step = ("1. Baixe o artefato e veja o detalhe de cada achado.\n" if artifact else
+                 f"1. Sem relatório: abra o [log do job]({job_url}). Normalmente é erro de execução ou de "
+                 f"configuração da ferramenta (token, versão, config), e não achado no código.\n")
     title = f"🚨 [{job}] {len(findings)} achado(s) na esteira — {REPO.split('/')[1]}"
     prev_txt = (f"\n> ⚠️ **Erro novo**: os achados de `{job}` mudaram desde #{previous['number']} "
                 f"(fingerprint `{(fp_of(previous) or '?')[:12]}` → `{fp[:12]}`).\n") if previous else ""
     body = (f"## 🚨 `{job}` falhou na esteira\n{prev_txt}\n{table}\n\n### Achados ({source})\n"
             f"{findings_block(findings)}\n\n### Próximos passos\n"
-            f"1. Baixe o artefato e veja o detalhe de cada achado.\n"
+            f"{next_step}"
             f"2. Corrija ou justifique; a esteira **não bloqueia** o deploy.\n"
             f"3. Enquanto os achados forem os mesmos, novos runs só comentam aqui.\n\n"
             f"---\n> Gerado automaticamente pela esteira aprimorada (geosiap/yaml-template/report)\n"
@@ -323,18 +372,34 @@ def main():
     jobs, artifacts = run_jobs(), run_artifacts()
     ensure_label("ci-failure")
     errors = 0
+    units = []  # (job lógico, info do job na API, nome do artefato)
     for job in failed:
         art_name = ARTIFACT_MAP.get(job) or DEFAULT_ARTIFACT_MAP.get(job) or f"{job}-report"
+        # job em matrix (ex.: trivy-image por imagem): jobs "<job> (<perna>)" na API + artefatos "<job>-<perna>-report"
+        legs = [(a[len(job) + 1:-len("-report")], a) for a in sorted(artifacts)
+                if a.startswith(f"{job}-") and a.endswith("-report") and a != art_name]
+        legs = [(leg, a) for leg, a in legs if f"{job} ({leg})" in jobs]
+        if art_name not in artifacts and legs:
+            for leg, leg_art in legs:
+                info = jobs[f"{job} ({leg})"]
+                if info.get("conclusion") != "failure":
+                    continue
+                units.append((f"{job}-{leg}", info, leg_art))
+        else:
+            units.append((job, jobs.get(job), art_name))
+    for job, info, art_name in units:
         art_dir = ARTIFACTS_DIR / art_name
         findings, source = set(), "artefato"
         if art_dir.is_dir():
             findings = findings_from_artifact(job, art_dir)
         if not findings:
-            steps = [s["name"] for s in (jobs.get(job) or {}).get("steps", []) if s.get("conclusion") == "failure"]
-            findings = {f"step falhou: {s}" for s in steps} or {"job falhou (sem detalhe)"}
-            source = "steps com falha — sem artefato legível"
+            info = info or {}
+            steps = [s["name"] for s in info.get("steps", []) if s.get("conclusion") == "failure"]
+            errs = job_error_lines(info)
+            findings = ({f"step falhou: {s}" for s in steps} | {f"erro: {e}" for e in errs}) or {"job falhou (sem detalhe)"}
+            source = "log do job — sem artefato legível"
         try:
-            handle(job, jobs.get(job), artifacts.get(art_name), findings, source)
+            handle(job, info, artifacts.get(art_name), findings, source)
         except RuntimeError as e:
             errors += 1
             print(f"  {job}: ERRO — {e}")

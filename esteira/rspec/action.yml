@@ -1,0 +1,49 @@
+name: 'Esteira — RSpec'
+description: 'Syntax check Ruby (um arquivo por chamada) + RSpec, se existir spec/.'
+inputs:
+  ruby-version:
+    description: 'Versão exata do Gemfile (ex.: 3.1.0)'
+    required: true
+  working-directory:
+    required: false
+    default: 'backend'
+  system-deps:
+    description: 'Pacotes apt para o bundle (ex.: "libpq-dev firebird-dev")'
+    required: false
+    default: 'libpq-dev'
+  lib-token:
+    description: 'LIB_TOKEN para gems privadas @geosiap'
+    required: false
+    default: ''
+  bundle-auth:
+    description: 'Comando que autentica o bundle — espelhe o Dockerfile do projeto ($LIB_TOKEN disponível)'
+    required: false
+    default: 'bundle config set --global rubygems.pkg.github.com "$LIB_TOKEN"'
+runs:
+  using: composite
+  steps:
+    - name: Instalar Ruby ${{ inputs.ruby-version }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+    - name: Ruby Syntax Check (ruby -c só checa o 1º argumento — um arquivo por chamada)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        find . -name "*.rb" -not -path "*/vendor/*" -print0 \
+          | xargs -0 -n1 -P4 ruby -c > /dev/null
+    - name: RSpec — testes (se existir spec/)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LIB_TOKEN: ${{ inputs.lib-token }}
+      run: |
+        if [ ! -d spec ]; then
+          echo "Pasta spec/ não encontrada — nenhum teste executado."
+          echo "Adicione rspec-rails ao Gemfile e crie spec/ para habilitar esta etapa."
+          exit 0
+        fi
+        sudo apt-get update -qq && sudo apt-get install -y ${{ inputs.system-deps }}
+        ${{ inputs.bundle-auth }}
+        bundle install --jobs 4
+        bundle exec rspec --format documentation

@@ -1,0 +1,51 @@
+name: 'Esteira — PHPUnit'
+description: 'Syntax check PHP (um arquivo por chamada) + PHPUnit. Laravel usa o phpunit do composer; legado usa o da tool.'
+inputs:
+  php-version:
+    description: 'Versão de PHP da APLICAÇÃO (a do Dockerfile)'
+    required: true
+  extensions:
+    required: false
+    default: 'mbstring, xml'
+  laravel:
+    description: "'true': composer install + .env + key:generate + vendor/bin/phpunit"
+    required: false
+    default: 'false'
+  phpunit-version:
+    description: 'Só sem Laravel (ex.: 8.5 para PHP 7.2)'
+    required: false
+    default: '8.5'
+  lint-excludes:
+    description: 'Diretórios fora do php -l, separados por espaço'
+    required: false
+    default: 'vendor'
+runs:
+  using: composite
+  steps:
+    - name: Instalar PHP ${{ inputs.php-version }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.extensions }}
+        tools: ${{ inputs.laravel != 'true' && format('phpunit:{0}', inputs.phpunit-version) || '' }}
+        coverage: pcov
+    - name: Instalar dependências e preparar Laravel
+      if: ${{ inputs.laravel == 'true' }}
+      shell: bash
+      run: |
+        composer install --prefer-dist --no-interaction --no-progress
+        cp .env.example .env
+        php artisan key:generate
+    - name: PHP Syntax Check (php < 8.3 só checa o 1º argumento — um arquivo por chamada)
+      shell: bash
+      run: |
+        EX=(); for e in ${{ inputs.lint-excludes }}; do EX+=(-not -path "./$e/*"); done
+        find . -name "*.php" "${EX[@]}" -print0 | xargs -0 -n1 -P4 php -l > /dev/null
+    - name: PHPUnit — testes
+      shell: bash
+      run: |
+        if [ "${{ inputs.laravel }}" = "true" ]; then
+          vendor/bin/phpunit --testdox --coverage-text
+        else
+          phpunit --testdox --coverage-text
+        fi

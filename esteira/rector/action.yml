@@ -1,0 +1,43 @@
+name: 'Esteira — Rector'
+description: 'Code smells PHP em dry-run (config no rector.php do projeto); artefato rector-report (JSON).'
+inputs:
+  php-version:
+    required: false
+    default: '8.4'
+  extensions:
+    required: false
+    default: 'mbstring, xml'
+  rector-version:
+    description: 'Instalado só no CI — não altera composer.json/lock do projeto'
+    required: false
+    default: '^2.3'
+runs:
+  using: composite
+  steps:
+    - name: Instalar PHP ${{ inputs.php-version }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.extensions }}
+    - name: Instalar dependências + Rector
+      shell: bash
+      run: |
+        composer install --prefer-dist --no-interaction --no-progress
+        composer require --dev "rector/rector:${{ inputs.rector-version }}" --no-interaction --no-progress --no-scripts
+    - name: Rector — dry-run
+      shell: bash
+      run: |
+        RC=0
+        vendor/bin/rector process --dry-run --no-progress-bar \
+          --output-format=json > /tmp/rector-report.json || RC=$?
+        jq -c '.totals' /tmp/rector-report.json 2>/dev/null || cat /tmp/rector-report.json
+        jq -r '.file_diffs[]?.file' /tmp/rector-report.json 2>/dev/null | head -50
+        exit $RC
+
+    - name: Upload rector-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rector-report
+        path: /tmp/rector-report.json
+        if-no-files-found: ignore

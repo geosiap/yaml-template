@@ -1,0 +1,373 @@
+# Esteira aprimorada — reusable workflow.
+#
+# Roda as verificações de qualidade/segurança de um projeto, deixa cada job vermelho quando há achado
+# (sem bloquear build/deploy — quem chama NÃO deve pôr o deploy em needs deste job) e, no fim, o job
+# "report" abre uma issue por ferramenta que falhou (dedup por fingerprint) + card no board.
+#
+# Uso no projeto (depois do job build):
+#
+#   esteira:
+#     needs: build
+#     if: always() && (github.ref_name == 'staging' || github.ref_name == 'esteira_aprimorada')
+#     permissions:
+#       contents: read
+#       issues: write
+#       actions: read
+#     uses: geosiap/yaml-template/.github/workflows/esteira.yml@main
+#     with:
+#       stacks: 'rails angular'                 # rails | angular | laravel | php-legado | python
+#       dockerfiles: 'Dockerfile.backend Dockerfile.frontend'
+#       build-result: ${{ needs.build.result }}
+#       docker-login: ${{ vars.DOCKER_LOGIN }}
+#       images: '[{"name":"backend","ref":"<registry>/<projeto>:backend-<tag>.<run>"}]'  # name vazio se for imagem única
+#       ruby-version: '3.1.0'
+#     secrets: inherit                          # SNYK_TOKEN, LIB_TOKEN, DOCKER_PASSWORD, APP_ID, APP_PRIVATE_KEY
+#
+# Cada job usa uma action de geosiap/yaml-template/esteira/<ferramenta> e publica o artefato <job>-report.
+
+name: Esteira aprimorada
+
+on:
+  workflow_call:
+    inputs:
+      stacks:
+        description: 'Stacks do projeto, separadas por espaço: rails angular laravel php-legado python'
+        type: string
+        required: true
+      skip:
+        description: 'Jobs a não rodar, separados por espaço (ex.: "snyk" em projeto sem manifesto de dependências)'
+        type: string
+        default: ''
+      # ── comuns ──
+      dockerfiles:
+        description: 'Dockerfiles de produção para o hadolint, separados por espaço'
+        type: string
+        default: 'Dockerfile'
+      hadolint-ignore:
+        type: string
+        default: 'DL3008 DL3009 DL3015 DL3020 DL3059 SC2016'
+      semgrep-configs:
+        description: 'Vazio = derivado das stacks (p/ruby, p/typescript, p/php, p/python) + p/owasp-top-ten'
+        type: string
+        default: ''
+      semgrep-target:
+        description: 'Caminho do semgrep, aceita flags (ex.: "application/ --exclude _vendors")'
+        type: string
+        default: '.'
+      images:
+        description: 'JSON [{"name": "...", "ref": "registry/projeto:tag"}] das imagens publicadas pelo build ("[]" = sem trivy-image)'
+        type: string
+        default: '[]'
+      docker-login:
+        description: 'vars.DOCKER_LOGIN do projeto (senha vem de secrets.DOCKER_PASSWORD)'
+        type: string
+        default: ''
+      build-result:
+        description: 'needs.build.result — o trivy-image só roda se o build passou'
+        type: string
+        default: 'success'
+      # ── Rails / Angular ──
+      backend-dir:
+        type: string
+        default: 'backend'
+      frontend-dir:
+        type: string
+        default: 'frontend'
+      ruby-version:
+        description: 'Versão EXATA do Gemfile (ex.: 3.1.0)'
+        type: string
+        default: ''
+      rails-system-deps:
+        type: string
+        default: 'libpq-dev'
+      bundle-auth:
+        description: 'Autenticação do bundle nas gems privadas — espelhe o Dockerfile ($LIB_TOKEN disponível)'
+        type: string
+        default: 'bundle config set --global rubygems.pkg.github.com "$LIB_TOKEN"'
+      node-version:
+        type: string
+        default: '18'
+      frontend-install:
+        type: string
+        default: 'npm install --legacy-peer-deps --no-audit --no-fund'
+      # ── PHP ──
+      php-version:
+        description: 'PHP que roda phpstan/phpcs/rector'
+        type: string
+        default: '8.2'
+      php-app-version:
+        description: 'PHP da aplicação (Dockerfile) para syntax check + phpunit; vazio = php-version'
+        type: string
+        default: ''
+      php-extensions:
+        type: string
+        default: 'mbstring, xml'
+      phpunit-version:
+        description: 'Só php-legado (Laravel usa o do composer)'
+        type: string
+        default: '8.5'
+      php-paths:
+        description: 'Caminhos do phpcs; vazio = app (laravel) ou application/_classes _funcoes _api (php-legado)'
+        type: string
+        default: ''
+      phpcs-ignore:
+        type: string
+        default: ''
+      php-lint-excludes:
+        type: string
+        default: ''
+      # ── Python ──
+      python-version:
+        type: string
+        default: '3.11'
+      python-requirements:
+        type: string
+        default: 'requirements.txt'
+      # ── board ──
+      board-number:
+        type: string
+        default: '33'
+      status-column:
+        type: string
+        default: 'Security issues'
+
+jobs:
+  # ─── Rails ────────────────────────────────────────────────────────────────────
+  rspec:
+    if: contains(format(' {0} ', inputs.stacks), ' rails ') && !contains(format(' {0} ', inputs.skip), ' rspec ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/rspec@main
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          working-directory: ${{ inputs.backend-dir }}
+          system-deps: ${{ inputs.rails-system-deps }}
+          bundle-auth: ${{ inputs.bundle-auth }}
+          lib-token: ${{ secrets.LIB_TOKEN }}
+
+  rubocop:
+    if: contains(format(' {0} ', inputs.stacks), ' rails ') && !contains(format(' {0} ', inputs.skip), ' rubocop ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/rubocop@main
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          working-directory: ${{ inputs.backend-dir }}
+          use-bundler: 'false'
+          gem-extensions: 'rubocop-rails rubocop-performance'
+          fail-on: 'errors-only'
+
+  brakeman:
+    if: contains(format(' {0} ', inputs.stacks), ' rails ') && !contains(format(' {0} ', inputs.skip), ' brakeman ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/brakeman@main
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          app-path: ./${{ inputs.backend-dir }}
+
+  # ─── Angular ──────────────────────────────────────────────────────────────────
+  lint-frontend:
+    if: contains(format(' {0} ', inputs.stacks), ' angular ') && !contains(format(' {0} ', inputs.skip), ' lint-frontend ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/lint-frontend@main
+        with:
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.frontend-dir }}
+          install-command: ${{ inputs.frontend-install }}
+          lib-token: ${{ secrets.LIB_TOKEN }}
+
+  # ─── PHP (laravel | php-legado) ───────────────────────────────────────────────
+  phpunit:
+    if: (contains(format(' {0} ', inputs.stacks), ' laravel ') || contains(format(' {0} ', inputs.stacks), ' php-legado ')) && !contains(format(' {0} ', inputs.skip), ' phpunit ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/phpunit@main
+        with:
+          php-version: ${{ inputs.php-app-version || inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          laravel: ${{ contains(format(' {0} ', inputs.stacks), ' laravel ') }}
+          phpunit-version: ${{ inputs.phpunit-version }}
+          lint-excludes: ${{ inputs.php-lint-excludes || (contains(format(' {0} ', inputs.stacks), ' laravel ') && 'vendor storage bootstrap/cache' || 'application/_vendors application/_cache application/_logs') }}
+
+  phpstan:
+    if: (contains(format(' {0} ', inputs.stacks), ' laravel ') || contains(format(' {0} ', inputs.stacks), ' php-legado ')) && !contains(format(' {0} ', inputs.skip), ' phpstan ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/phpstan@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          composer: ${{ contains(format(' {0} ', inputs.stacks), ' laravel ') }}
+
+  phpcs:
+    if: (contains(format(' {0} ', inputs.stacks), ' laravel ') || contains(format(' {0} ', inputs.stacks), ' php-legado ')) && !contains(format(' {0} ', inputs.skip), ' phpcs ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/phpcs@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          paths: ${{ inputs.php-paths || (contains(format(' {0} ', inputs.stacks), ' laravel ') && 'app' || 'application/_classes application/_funcoes application/_api') }}
+          ignore: ${{ inputs.phpcs-ignore || (contains(format(' {0} ', inputs.stacks), ' laravel ') && 'vendor,storage,bootstrap/cache' || '*/_vendors/*,*/_cache/*,*/_logs/*') }}
+
+  rector:
+    if: contains(format(' {0} ', inputs.stacks), ' laravel ') && !contains(format(' {0} ', inputs.skip), ' rector ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/rector@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+
+  # ─── Python ───────────────────────────────────────────────────────────────────
+  pytest:
+    if: contains(format(' {0} ', inputs.stacks), ' python ') && !contains(format(' {0} ', inputs.skip), ' pytest ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/pytest@main
+        with:
+          python-version: ${{ inputs.python-version }}
+          requirements: ${{ inputs.python-requirements }}
+
+  pylint:
+    if: contains(format(' {0} ', inputs.stacks), ' python ') && !contains(format(' {0} ', inputs.skip), ' pylint ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/pylint@main
+        with:
+          python-version: ${{ inputs.python-version }}
+          requirements-file: ${{ inputs.python-requirements }}
+          disable-categories: 'C,R'
+          fail-on: 'all'
+
+  flake8:
+    if: contains(format(' {0} ', inputs.stacks), ' python ') && !contains(format(' {0} ', inputs.skip), ' flake8 ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/flake8@main
+        with:
+          python-version: ${{ inputs.python-version }}
+          max-line-length: '120'
+
+  bandit:
+    if: contains(format(' {0} ', inputs.stacks), ' python ') && !contains(format(' {0} ', inputs.skip), ' bandit ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/bandit@main
+        with:
+          python-version: ${{ inputs.python-version }}
+          severity-level: '-ll'
+
+  # ─── Comuns a toda stack ──────────────────────────────────────────────────────
+  semgrep:
+    if: ${{ !contains(format(' {0} ', inputs.skip), ' semgrep ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packs do semgrep (derivados das stacks quando não informados)
+        id: cfg
+        shell: bash
+        run: |
+          CFG="${{ inputs.semgrep-configs }}"
+          if [ -z "$CFG" ]; then
+            S=" ${{ inputs.stacks }} "
+            [[ "$S" == *" rails "* ]]      && CFG="$CFG p/ruby"
+            [[ "$S" == *" angular "* ]]    && CFG="$CFG p/typescript"
+            [[ "$S" == *" laravel "* || "$S" == *" php-legado "* ]] && CFG="$CFG p/php"
+            [[ "$S" == *" python "* ]]     && CFG="$CFG p/python"
+            CFG="${CFG# } p/owasp-top-ten"
+          fi
+          echo "configs=$CFG" >> "$GITHUB_OUTPUT"
+      - uses: geosiap/yaml-template/esteira/semgrep@main
+        with:
+          configs: ${{ steps.cfg.outputs.configs }}
+          target: ${{ inputs.semgrep-target }}
+
+  snyk:
+    if: ${{ !contains(format(' {0} ', inputs.skip), ' snyk ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/snyk@main
+        with:
+          token: ${{ secrets.SNYK_TOKEN }}
+          python-requirements: ${{ contains(format(' {0} ', inputs.stacks), ' python ') && inputs.python-requirements || '' }}
+          python-version: ${{ inputs.python-version }}
+
+  trivy:
+    if: ${{ !contains(format(' {0} ', inputs.skip), ' trivy ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/trivy@main
+        with:
+          severity: 'CRITICAL,HIGH'
+
+  gitleaks:
+    if: ${{ !contains(format(' {0} ', inputs.skip), ' gitleaks ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: geosiap/yaml-template/esteira/gitleaks@main
+
+  hadolint:
+    if: inputs.dockerfiles != '' && !contains(format(' {0} ', inputs.skip), ' hadolint ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/hadolint@main
+        with:
+          dockerfiles: ${{ inputs.dockerfiles }}
+          ignore: ${{ inputs.hadolint-ignore }}
+
+  # Um job por imagem (a action trivy-image não roda 2x no mesmo job). Imagem única: name vazio.
+  trivy-image:
+    if: inputs.images != '[]' && inputs.build-result == 'success' && !contains(format(' {0} ', inputs.skip), ' trivy-image ')
+    name: ${{ matrix.name && format('trivy-image ({0})', matrix.name) || 'trivy-image' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geosiap/yaml-template/esteira/trivy-image@main
+        with:
+          image: ${{ matrix.ref }}
+          docker-login: ${{ inputs.docker-login }}
+          docker-password: ${{ secrets.DOCKER_PASSWORD }}
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          artifact-name: ${{ matrix.name && format('trivy-image-{0}-report', matrix.name) || 'trivy-image-report' }}
+
+  # ─── Report ───────────────────────────────────────────────────────────────────
+  report:
+    if: always()
+    needs: [rspec, rubocop, brakeman, lint-frontend, phpunit, phpstan, phpcs, rector, pytest, pylint, flake8, bandit, semgrep, snyk, trivy, gitleaks, hadolint, trivy-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: geosiap/yaml-template/report@main
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          needs-json: ${{ toJSON(needs) }}
+          board-number: ${{ inputs.board-number }}
+          status-column: ${{ inputs.status-column }}

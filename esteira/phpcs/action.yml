@@ -1,0 +1,39 @@
+name: 'Esteira — PHPCS'
+description: 'Padrão de código (PSR-12 por padrão); artefato phpcs-report (JSON).'
+inputs:
+  php-version:
+    required: false
+    default: '8.2'
+  paths:
+    description: 'Caminhos separados por espaço'
+    required: true
+  ignore:
+    description: 'Padrões ignorados, separados por vírgula'
+    required: false
+    default: 'vendor'
+  standard:
+    required: false
+    default: 'PSR12'
+runs:
+  using: composite
+  steps:
+    - name: Instalar PHP ${{ inputs.php-version }} + phpcs
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: mbstring, xml
+        tools: phpcs
+    - name: PHPCS — padrão ${{ inputs.standard }}
+      shell: bash
+      run: |
+        phpcs --standard=${{ inputs.standard }} --ignore='${{ inputs.ignore }}' \
+          --report-summary --report-json=/tmp/phpcs-report.json \
+          ${{ inputs.paths }}
+
+    - name: Upload phpcs-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: phpcs-report
+        path: /tmp/phpcs-report.json
+        if-no-files-found: ignore

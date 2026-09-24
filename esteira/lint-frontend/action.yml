@@ -1,0 +1,58 @@
+name: 'Esteira — Lint do frontend'
+description: 'Lint Angular/TypeScript: ng lint se houver target, senão ESLint, senão TSLint. Artefato lint-frontend-report.'
+inputs:
+  node-version:
+    required: false
+    default: '18'
+  working-directory:
+    required: false
+    default: 'frontend'
+  lib-token:
+    description: 'LIB_TOKEN para pacotes @geosiap'
+    required: false
+    default: ''
+  install-command:
+    description: 'Mesmo gerenciador do Dockerfile do frontend'
+    required: false
+    default: 'npm install --legacy-peer-deps --no-audit --no-fund'
+runs:
+  using: composite
+  steps:
+    - name: Instalar Node.js ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Configurar .npmrc para os pacotes @geosiap
+      if: ${{ inputs.lib-token != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.lib-token }}" > .npmrc
+        echo "@geosiap:registry=https://npm.pkg.github.com" >> .npmrc
+    - name: Instalar dependências
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.install-command }}
+    - name: Lint — Angular/TypeScript
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -o pipefail
+        if grep -q '"lint"' angular.json 2>/dev/null; then
+          npx ng lint 2>&1 | tee /tmp/lint-frontend-report.txt
+        elif ls .eslintrc* eslint.config.* >/dev/null 2>&1; then
+          npx eslint . --ext .ts,.html 2>&1 | tee /tmp/lint-frontend-report.txt
+        elif [ -f tslint.json ]; then
+          npx tslint -c tslint.json -p tsconfig.json --format verbose 2>&1 | tee /tmp/lint-frontend-report.txt
+        else
+          echo "Nenhuma configuração de lint encontrada" | tee /tmp/lint-frontend-report.txt
+          exit 1
+        fi
+
+    - name: Upload lint-frontend-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: lint-frontend-report
+        path: /tmp/lint-frontend-report.txt
+        if-no-files-found: ignore

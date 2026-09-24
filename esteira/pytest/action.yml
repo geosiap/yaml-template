@@ -1,0 +1,36 @@
+name: 'Esteira — pytest'
+description: 'Syntax check Python + pytest, se existir tests/.'
+inputs:
+  python-version:
+    required: false
+    default: '3.11'
+  requirements:
+    required: false
+    default: 'requirements.txt'
+runs:
+  using: composite
+  steps:
+    - name: Instalar Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Instalar dependências Python
+      shell: bash
+      run: |
+        pip install --upgrade pip
+        if [ -f "${{ inputs.requirements }}" ]; then pip install -r "${{ inputs.requirements }}"; fi
+        pip install pytest pytest-cov
+    - name: Python Syntax Check
+      shell: bash
+      run: |
+        find . -name "*.py" -not -path "./.git/*" -not -path "*/__pycache__/*" -print0 \
+          | xargs -0 -r python3 -m py_compile
+    - name: pytest — testes (se existir tests/)
+      shell: bash
+      run: |
+        if [ ! -d tests ]; then
+          echo "Pasta tests/ não encontrada — nenhum teste executado."
+          echo "Crie tests/ (ex.: tests/test_app.py) para habilitar esta etapa."
+          exit 0
+        fi
+        pytest --tb=short --cov=. --cov-report=term-missing

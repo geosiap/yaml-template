@@ -1,0 +1,33 @@
+name: 'Esteira — Semgrep'
+description: 'SAST com Semgrep (--error: falha se houver achado); artefato semgrep-report (JSON).'
+inputs:
+  configs:
+    description: 'Packs separados por espaço (ex.: "p/php p/owasp-top-ten")'
+    required: true
+  target:
+    description: 'Caminho analisado, aceita flags extras (ex.: "application/ --exclude _vendors")'
+    required: false
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - name: Semgrep — SAST (${{ inputs.configs }})
+      shell: bash
+      run: |
+        pip install -q semgrep
+        CFG=""; for c in ${{ inputs.configs }}; do CFG="$CFG --config $c"; done
+        RC=0
+        semgrep scan $CFG --metrics=off --error \
+          --json --output /tmp/semgrep-report.json ${{ inputs.target }} || RC=$?
+        jq -r '.results[] | "\(.extra.severity)\t\(.check_id)\t\(.path):\(.start.line)"' \
+          /tmp/semgrep-report.json 2>/dev/null | head -200
+        echo "Total de achados: $(jq '.results | length' /tmp/semgrep-report.json 2>/dev/null || echo '?')"
+        exit $RC
+
+    - name: Upload semgrep-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: semgrep-report
+        path: /tmp/semgrep-report.json
+        if-no-files-found: ignore

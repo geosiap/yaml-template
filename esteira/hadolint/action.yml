@@ -1,0 +1,39 @@
+name: 'Esteira — Hadolint'
+description: 'Boas práticas dos Dockerfiles de produção. Falha se houver achado; artefato hadolint-report (um JSON por Dockerfile).'
+inputs:
+  dockerfiles:
+    description: 'Dockerfiles separados por espaço (só os de produção)'
+    required: false
+    default: 'Dockerfile'
+  ignore:
+    description: 'Regras ignoradas, separadas por espaço'
+    required: false
+    default: 'DL3008 DL3009 DL3015 DL3020 DL3059 SC2016'
+  version:
+    required: false
+    default: '2.12.0'
+runs:
+  using: composite
+  steps:
+    - name: Hadolint — ${{ inputs.dockerfiles }}
+      shell: bash
+      run: |
+        curl -sSfL -o /tmp/hadolint "https://github.com/hadolint/hadolint/releases/download/v${{ inputs.version }}/hadolint-Linux-x86_64"
+        chmod +x /tmp/hadolint
+        IGN=""; for r in ${{ inputs.ignore }}; do IGN="$IGN --ignore $r"; done
+        RC=0
+        for f in ${{ inputs.dockerfiles }}; do
+          echo "::group::$f"
+          /tmp/hadolint $IGN "$f" || RC=1
+          /tmp/hadolint $IGN -f json "$f" > "/tmp/hadolint-$(basename "$f").json" || true
+          echo "::endgroup::"
+        done
+        exit $RC
+
+    - name: Upload hadolint-report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hadolint-report
+        path: /tmp/hadolint-*.json
+        if-no-files-found: ignore
