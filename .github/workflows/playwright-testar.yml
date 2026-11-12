@@ -1,0 +1,360 @@
+# Playwright — roda os testes E2E (runner local primeiro, GitHub como fallback). Reusable workflow.
+#
+# 1. Job "local": roda no runner próprio, onde browsers e bibliotecas ficam instalados entre execuções
+#    (ver playwright/preparar). É o caminho normal e o mais rápido.
+# 2. Job "fallback": roda em máquina hospedada do GitHub SOMENTE se o local não chegou a executar os testes
+#    (falha ao preparar o ambiente, sem sudo, sistema inacessível a partir do runner...) ou se o chamador pediu
+#    "forcar-github". Teste que FALHA no local não vai para o fallback: seria rodar o mesmo teste de novo.
+#    Limite: se o runner próprio estiver desligado o job local fica na fila e não vira fallback sozinho;
+#    nesse caso dispare de novo com forcar-github.
+# 3. Job "resultado": decide verde/vermelho (é ele que o job chamador enxerga) e resume onde rodou.
+# 4. Job "comentar": se vermelho, comenta na issue citada no INÍCIO das mensagens dos commits do push
+#    ("#123 - ...", "Issue 123 - ...", "Card 123 - ...", merge de "origin/issue-123"). Nunca bloqueia nada.
+#
+# Uso no projeto (depois do deploy do ambiente testado):
+#
+#   playwright_test:
+#     needs: [deploy_automacao, selecionar_testes]
+#     if: needs.selecionar_testes.outputs.executar != 'nenhum'
+#     uses: geosiap/yaml-template/.github/workflows/playwright-testar.yml@main
+#     with:
+#       base-url: https://<ambiente>/<sistema>
+#       grep: ${{ needs.selecionar_testes.outputs.grep }}
+#       runner-local: '["self-hosted","<label-do-runner>"]'
+#       issues-repo: <org>/<repo-das-issues>      # vazio = não comenta
+#     secrets:                                    # só para comentar na issue; repasse apenas estes dois
+#       APP_ID: ${{ secrets.APP_ID }}
+#       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+#
+# O teste usa BASE_URL do ambiente. A pasta de testes é <pasta-testes> dentro da branch <branch-testes>.
+
+name: Playwright — testar
+
+on:
+  workflow_call:
+    inputs:
+      base-url:
+        description: 'URL do sistema sob teste (vira a variável de ambiente BASE_URL dos testes)'
+        type: string
+        required: true
+      grep:
+        description: 'Regex para o --grep do Playwright (vazio = todos os testes)'
+        type: string
+        default: ''
+      runner-local:
+        description: 'Labels do runner próprio, em JSON (ex.: ["self-hosted","label"])'
+        type: string
+        default: '["self-hosted"]'
+      forcar-github:
+        description: 'true = pula o runner local e roda direto em máquina hospedada do GitHub'
+        type: boolean
+        default: false
+      branch-testes:
+        type: string
+        default: 'qa-automacao'
+      pasta-testes:
+        description: 'Pasta dos testes dentro da branch de testes (onde está o package.json do Playwright)'
+        type: string
+        default: 'qa-automacao'
+      browsers:
+        description: 'Browsers a preparar, separados por espaço'
+        type: string
+        default: 'chromium firefox'
+      timeout-minutos:
+        type: number
+        default: 90
+      espera-sistema-segundos:
+        description: 'Quanto esperar o sistema responder antes de abrir o navegador'
+        type: number
+        default: 300
+      issues-repo:
+        description: 'Repositório (org/repo) das issues a comentar quando falhar. Vazio = não comenta'
+        type: string
+        default: ''
+      issue-teste:
+        description: 'Modo teste: se preenchido, TODO comentário vai só para esta issue de issues-repo'
+        type: string
+        default: ''
+      texto-extra:
+        description: 'Linha extra no comentário (ex.: o que deixou de acontecer e como liberar manualmente)'
+        type: string
+        default: ''
+    secrets:
+      APP_ID:
+        description: 'ID da GitHub App que comenta na issue (necessário só com issues-repo)'
+        required: false
+      APP_PRIVATE_KEY:
+        description: 'Chave privada da GitHub App'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ─── 1. Runner local ─────────────────────────────────────────────────────────
+  local:
+    name: Playwright no runner local
+    if: ${{ !inputs.forcar-github }}
+    runs-on: ${{ fromJSON(inputs.runner-local) }}
+    timeout-minutes: ${{ inputs.timeout-minutos }}
+    # Falha de ambiente aqui não pode derrubar o run: o fallback assume. O veredito é do job "resultado",
+    # que lê as saídas abaixo (executou = os testes chegaram a rodar; passou = rodaram e passaram).
+    continue-on-error: true
+    outputs:
+      executou: ${{ steps.inicio.outputs.executou }}
+      passou: ${{ steps.fim.outputs.passou }}
+    env:
+      BASE_URL: ${{ inputs.base-url }}
+      GREP: ${{ inputs.grep }}
+      ESPERA: ${{ inputs.espera-sistema-segundos }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.pasta-testes }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.branch-testes }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ inputs.pasta-testes }}/.nvmrc
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Preparar browsers (cache no runner)
+        uses: geosiap/yaml-template/playwright/preparar@main
+        with:
+          working-directory: ${{ inputs.pasta-testes }}
+          browsers: ${{ inputs.browsers }}
+          modo: local
+
+      - name: Aguardar o sistema responder
+        run: |
+          fim=$((SECONDS + ESPERA))
+          while [ "$SECONDS" -lt "$fim" ]; do
+            curl -sf -o /dev/null "$BASE_URL/" && exit 0
+            sleep 10
+          done
+          echo "::error::O sistema não respondeu em $BASE_URL/ em ${ESPERA}s."
+          exit 1
+
+      - name: Listar os testes escolhidos
+        run: |
+          if [ -n "$GREP" ]; then npx playwright test --grep "$GREP" --list | tee lista.txt; else npx playwright test --list | tee lista.txt; fi
+          { echo '### Testes que serão executados (runner local)'; echo; echo '```'; cat lista.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # A partir daqui, falha de teste é falha DE TESTE (não cai no fallback).
+      - name: Marcar início dos testes
+        id: inicio
+        run: echo "executou=true" >> "$GITHUB_OUTPUT"
+
+      - name: Rodar testes
+        run: |
+          if [ -n "$GREP" ]; then npx playwright test --grep "$GREP"; else npx playwright test; fi
+
+      - name: Marcar sucesso
+        id: fim
+        run: echo "passou=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar relatório do Playwright
+        if: failure() && steps.inicio.outputs.executou == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ${{ inputs.pasta-testes }}/playwright-report/
+          retention-days: 14
+
+  # ─── 2. Fallback hospedado ───────────────────────────────────────────────────
+  fallback:
+    name: Playwright no GitHub (fallback)
+    needs: local
+    if: >-
+      always() && needs.local.result != 'cancelled' &&
+      (inputs.forcar-github || needs.local.outputs.executou != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutos }}
+    outputs:
+      executou: ${{ steps.inicio.outputs.executou }}
+    env:
+      BASE_URL: ${{ inputs.base-url }}
+      GREP: ${{ inputs.grep }}
+      ESPERA: ${{ inputs.espera-sistema-segundos }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.pasta-testes }}
+    steps:
+      - name: Motivo do fallback
+        working-directory: .
+        run: |
+          if [ "${{ inputs.forcar-github }}" = "true" ]; then
+            echo "::notice::Rodando no GitHub porque forcar-github foi pedido."
+            echo "### Playwright no GitHub (pedido manual)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::O runner local não conseguiu executar os testes; usando o fallback do GitHub."
+            echo "### ⚠️ Fallback: o runner local não chegou a executar os testes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.branch-testes }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ inputs.pasta-testes }}/.nvmrc
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Preparar browsers
+        uses: geosiap/yaml-template/playwright/preparar@main
+        with:
+          working-directory: ${{ inputs.pasta-testes }}
+          browsers: ${{ inputs.browsers }}
+          modo: github
+
+      - name: Aguardar o sistema responder
+        run: |
+          fim=$((SECONDS + ESPERA))
+          while [ "$SECONDS" -lt "$fim" ]; do
+            curl -sf -o /dev/null "$BASE_URL/" && exit 0
+            sleep 10
+          done
+          echo "::error::O sistema não respondeu em $BASE_URL/ em ${ESPERA}s."
+          exit 1
+
+      - name: Listar os testes escolhidos
+        run: |
+          if [ -n "$GREP" ]; then npx playwright test --grep "$GREP" --list | tee lista.txt; else npx playwright test --list | tee lista.txt; fi
+          { echo '### Testes que serão executados (GitHub)'; echo; echo '```'; cat lista.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Marcar início dos testes
+        id: inicio
+        run: echo "executou=true" >> "$GITHUB_OUTPUT"
+
+      - name: Rodar testes
+        run: |
+          if [ -n "$GREP" ]; then npx playwright test --grep "$GREP"; else npx playwright test; fi
+
+      - name: Publicar relatório do Playwright
+        if: failure() && steps.inicio.outputs.executou == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ${{ inputs.pasta-testes }}/playwright-report/
+          retention-days: 14
+
+  # ─── 3. Veredito ─────────────────────────────────────────────────────────────
+  resultado:
+    name: Resultado dos testes
+    needs: [local, fallback]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decidir
+        env:
+          LOCAL_EXECUTOU: ${{ needs.local.outputs.executou }}
+          LOCAL_PASSOU: ${{ needs.local.outputs.passou }}
+          FALLBACK: ${{ needs.fallback.result }}
+        run: |
+          if [ "$LOCAL_PASSOU" = "true" ]; then
+            echo "Testes passaram no runner local."
+            echo "### ✅ Testes passaram (runner local)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$FALLBACK" = "success" ]; then
+            echo "Testes passaram no fallback do GitHub."
+            echo "### ✅ Testes passaram (fallback no GitHub)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$LOCAL_EXECUTOU" = "true" ]; then
+            echo "::error::Os testes falharam no runner local."
+          else
+            echo "::error::Os testes não passaram (runner local sem executar; fallback: ${FALLBACK:-não rodou})."
+          fi
+          exit 1
+
+  # ─── 4. Comentário na issue (nunca bloqueia) ─────────────────────────────────
+  comentar:
+    name: Comentar falha na issue
+    needs: resultado
+    if: always() && needs.resultado.result == 'failure' && inputs.issues-repo != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      ISSUE_REPO: ${{ inputs.issues-repo }}
+      ISSUE_TESTE: ${{ inputs.issue-teste }}
+      TEXTO_EXTRA: ${{ inputs.texto-extra }}
+    steps:
+      # O token da App é limitado ao repositório das issues (org/repo -> dono e nome).
+      - name: Separar dono e repositório das issues
+        id: alvo
+        run: |
+          echo "dono=${ISSUE_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "repo=${ISSUE_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar token da GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ steps.alvo.outputs.dono }}
+          repositories: ${{ steps.alvo.outputs.repo }}
+
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Achar as issues e comentar
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Push: todos os commits do push. Disparo manual: só o commit atual.
+          COMMITS_JSON: ${{ github.event_name == 'push' && toJSON(github.event.commits.*.message) || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -z "$COMMITS_JSON" ]; then
+            COMMITS_JSON=$(git log -1 --format=%B | python3 -c 'import json,sys; print(json.dumps([sys.stdin.read()]))')
+          fi
+          export COMMITS_JSON
+          NUMEROS=$(python3 -I - <<'PY'
+          import json, os, re
+          # Número da issue no INÍCIO da primeira linha: "#7633 - ...", "Issue 7580 - ...", "Card 6660 - ...", "7542 ..."
+          INICIO = re.compile(r'^\s*(?:issue|card)?\s*#?\s*(\d{3,6})(?!\d)', re.I)
+          # Merge de branch de issue: "Merge remote-tracking branch 'origin/issue-7588' into staging"
+          MERGE = re.compile(r'^merge\b.*\bissue-(\d{3,6})\b', re.I)
+          numeros = []
+          for msg in json.loads(os.environ.get('COMMITS_JSON') or '[]'):
+              linha = (msg or '').splitlines()[0] if (msg or '').strip() else ''
+              m = INICIO.match(linha) or MERGE.match(linha)
+              if m and m.group(1) not in numeros:
+                  numeros.append(m.group(1))
+          print(' '.join(numeros))
+          PY
+          )
+          echo "Issues detectadas: ${NUMEROS:-nenhuma}"
+
+          corpo() {  # $1 = linha extra
+            cat <<MSG
+          ❌ **Os testes de Playwright falharam.**
+
+          - Push de @${ACTOR}, commit \`${SHA:0:7}\`
+          - Run e relatório (artefato \`playwright-report\`): ${RUN_URL}
+          ${TEXTO_EXTRA:+- ${TEXTO_EXTRA}}
+          $1
+          MSG
+          }
+
+          if [ -n "$ISSUE_TESTE" ]; then
+            gh issue comment "$ISSUE_TESTE" -R "$ISSUE_REPO" --body "$(corpo "- _Modo teste_: comentário só neste card. Issues detectadas nos commits: ${NUMEROS:-nenhuma}")"
+          elif [ -n "$NUMEROS" ]; then
+            for n in $NUMEROS; do
+              gh issue comment "$n" -R "$ISSUE_REPO" --body "$(corpo '')" || echo "::warning::não consegui comentar em $ISSUE_REPO#$n"
+            done
+          else
+            echo "::warning::Nenhuma issue encontrada no início das mensagens de commit; nada comentado."
+          fi

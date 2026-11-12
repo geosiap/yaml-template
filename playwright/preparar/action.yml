@@ -1,0 +1,43 @@
+name: 'Playwright — preparar browsers'
+description: 'Deixa browsers e bibliotecas do sistema prontos. Em máquina fixa (runner próprio) só reinstala as bibliotecas (apt) quando a versão do Playwright ou a lista de browsers muda; em máquina descartável (hosted) instala sempre.'
+# Requer node e as dependências do projeto de testes já instaladas (npm ci), pois usa o npx playwright local.
+# modo=local usa sudo apt via "--with-deps" na primeira vez de cada versão: o usuário do runner precisa de sudo sem senha.
+# Se isso falhar, o passo falha de propósito: quem chama pode cair no fallback hospedado.
+inputs:
+  working-directory:
+    description: 'Pasta do projeto de testes (onde está o package.json do Playwright)'
+    required: false
+    default: '.'
+  browsers:
+    description: 'Browsers separados por espaço (chromium firefox webkit)'
+    required: false
+    default: 'chromium firefox'
+  modo:
+    description: 'local = máquina fixa com cache entre execuções; github = máquina descartável (instala sempre)'
+    required: false
+    default: 'local'
+runs:
+  using: composite
+  steps:
+    - name: Playwright — browsers e bibliotecas
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BROWSERS: ${{ inputs.browsers }}
+        MODO: ${{ inputs.modo }}
+      run: |
+        if [ "$MODO" != "local" ]; then
+          npx playwright install --with-deps $BROWSERS
+          exit 0
+        fi
+        VERSAO=$(npx playwright --version | awk '{print $2}')
+        RAIZ="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+        MARCA="$RAIZ/.deps-$VERSAO-$(echo "$BROWSERS" | tr ' ' '-')"
+        if [ ! -f "$MARCA" ]; then
+          echo "Primeira vez para Playwright $VERSAO ($BROWSERS): instalando bibliotecas do sistema."
+          npx playwright install --with-deps $BROWSERS
+          mkdir -p "$RAIZ" && touch "$MARCA"
+        else
+          echo "Playwright $VERSAO ($BROWSERS) já preparado neste runner."
+          npx playwright install $BROWSERS
+        fi

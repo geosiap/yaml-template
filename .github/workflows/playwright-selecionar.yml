@@ -1,0 +1,89 @@
+# Playwright — escolhe os testes pelos arquivos alterados no push. Reusable workflow.
+#
+# Lista os arquivos do push (commit anterior -> atual) e chama o script de seleção do projeto de testes,
+# que consulta um mapa "arquivo -> tag de teste". O script e o mapa moram na branch de testes e são do
+# time de testes; este workflow só os executa. Sem commit anterior (disparo manual, branch nova) roda tudo.
+#
+# Contrato do script (node <script> <arquivo-com-alterados> <mapa>):
+#   - lê um arquivo com um caminho por linha ("__tudo__" = sem base de comparação);
+#   - escreve em $GITHUB_OUTPUT:  executar=tudo|tags|nenhum   e   grep=<regex para --grep do Playwright>.
+#
+# Uso no projeto:
+#
+#   selecionar_testes:
+#     if: github.ref_name == 'staging'
+#     uses: geosiap/yaml-template/.github/workflows/playwright-selecionar.yml@main
+#
+# Saídas: executar (tudo | tags | nenhum) e grep. Use em needs.<job>.outputs.* nos jobs seguintes.
+
+name: Playwright — selecionar testes
+
+on:
+  workflow_call:
+    inputs:
+      branch-testes:
+        description: 'Branch do repositório onde vivem os testes'
+        type: string
+        default: 'qa-automacao'
+      pasta-testes:
+        description: 'Pasta dos testes dentro da branch de testes'
+        type: string
+        default: 'qa-automacao'
+      script:
+        description: 'Script de seleção, relativo à pasta dos testes'
+        type: string
+        default: 'ci/selecionar-testes.js'
+      mapa:
+        description: 'Mapa de telas, relativo à pasta dos testes'
+        type: string
+        default: 'ci/mapa-telas.json'
+    outputs:
+      executar:
+        description: 'tudo | tags | nenhum'
+        value: ${{ jobs.selecionar.outputs.executar }}
+      grep:
+        description: 'Regex de tags para o --grep do Playwright (vazio quando executar = nenhum)'
+        value: ${{ jobs.selecionar.outputs.grep }}
+
+permissions:
+  contents: read
+
+jobs:
+  selecionar:
+    name: Escolher testes pelos arquivos alterados
+    runs-on: ubuntu-latest
+    outputs:
+      executar: ${{ steps.selecao.outputs.executar }}
+      grep: ${{ steps.selecao.outputs.grep }}
+    steps:
+      - name: Baixar o sistema
+        uses: actions/checkout@v3
+        with:
+          path: sistema
+
+      # Arquivos do push inteiro (vários commits/merges). Se o "antes" não existe ou não pode ser buscado
+      # (disparo manual, branch nova, force-push), roda tudo: na dúvida, testa.
+      - name: Listar os arquivos alterados
+        working-directory: sistema
+        env:
+          ANTES: ${{ github.event.before }}
+        run: |
+          if [ -n "$ANTES" ] && [ "$ANTES" != "0000000000000000000000000000000000000000" ] && git fetch -q --depth=1 origin "$ANTES"; then
+            git diff --name-only "$ANTES" "$GITHUB_SHA" > ../alterados.txt
+          else
+            echo "__tudo__" > ../alterados.txt
+          fi
+          cat ../alterados.txt
+
+      - name: Baixar os testes
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.branch-testes }}
+          path: testes
+
+      - name: Escolher os testes
+        id: selecao
+        env:
+          SCRIPT: testes/${{ inputs.pasta-testes }}/${{ inputs.script }}
+          MAPA: testes/${{ inputs.pasta-testes }}/${{ inputs.mapa }}
+        run: node "$SCRIPT" alterados.txt "$MAPA"
