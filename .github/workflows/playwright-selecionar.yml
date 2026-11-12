@@ -50,7 +50,7 @@ permissions:
 
 jobs:
   selecionar:
-    name: Escolher testes pelos arquivos alterados
+    name: arquivos alterados
     runs-on: ubuntu-latest
     outputs:
       executar: ${{ steps.selecao.outputs.executar }}
