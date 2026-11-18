@@ -15,8 +15,10 @@ description: 'Uma issue por ferramenta que falhou, deduplicada por fingerprint d
 #           app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
 #           needs-json: ${{ toJSON(needs) }}
 #
-# Convenção: o artefato de cada job se chama "<job>-report" (exceção conhecida: trivy -> trivy-iac-report).
-# Outros nomes podem ser passados em artifact-map, ex.: '{"lint": "eslint-report"}'.
+# Convenção: o artefato de cada job se chama "<job>-report". Outros nomes podem ser passados em
+# artifact-map, ex.: '{"lint": "eslint-report"}'.
+# Se os jobs têm `name:` diferente do id, passe job-names ({id: nome}) para o report achar o job na API.
+# No fim escreve o resumo do run (aba Summary): uma linha por verificação, com o link da issue.
 #
 # Por job que falhou:
 #   - mesmo fingerprint de uma issue aberta (labels ci-failure + esteira:<job>) -> comenta "reincidência";
@@ -47,6 +49,10 @@ inputs:
     description: 'JSON {job: nome-do-artefato} para jobs fora da convenção <job>-report'
     required: false
     default: '{}'
+  job-names:
+    description: 'JSON {id do job: nome exibido (name:)} — para casar jobs com name: customizado na API'
+    required: false
+    default: '{}'
 
 runs:
   using: composite
@@ -75,4 +81,5 @@ runs:
         BOARD_NUMBER: ${{ inputs.board-number }}
         STATUS_COLUMN: ${{ inputs.status-column }}
         ARTIFACT_MAP: ${{ inputs.artifact-map }}
+        JOB_NAMES: ${{ inputs.job-names }}
       run: python3 "${{ github.action_path }}/esteira_report.py"

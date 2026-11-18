@@ -1,5 +1,5 @@
 name: 'Esteira — pytest'
-description: 'Syntax check Python + pytest, se existir tests/.'
+description: 'pytest, só se existirem testes (test_*.py / *_test.py). Sem testes a etapa fica adormecida e passa.'
 inputs:
   python-version:
     required: false
@@ -7,30 +7,44 @@ inputs:
   requirements:
     required: false
     default: 'requirements.txt'
+outputs:
+  ran:
+    description: "'true' se havia testes e o pytest rodou"
+    value: ${{ steps.detect.outputs.has }}
 runs:
   using: composite
   steps:
+    - name: Procurar testes
+      id: detect
+      shell: bash
+      run: |
+        if [ -n "$(find . \( -path ./.git -o -path '*/node_modules' -o -path '*/venv' -o -path '*/.venv' \) -prune -o \
+                  -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit)" ]; then
+          echo "has=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has=false" >> "$GITHUB_OUTPUT"
+          MSG="⚪ **pytest:** nenhum \`test_*.py\` — etapa adormecida (passa a rodar sozinha quando existir um teste)."
+          echo "$MSG" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
     - name: Instalar Python ${{ inputs.python-version }}
+      if: steps.detect.outputs.has == 'true'
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
     - name: Instalar dependências Python
+      if: steps.detect.outputs.has == 'true'
       shell: bash
       run: |
         pip install --upgrade pip
         if [ -f "${{ inputs.requirements }}" ]; then pip install -r "${{ inputs.requirements }}"; fi
-        pip install pytest pytest-cov
-    - name: Python Syntax Check
+        pip install pytest
+    - name: pytest
+      if: steps.detect.outputs.has == 'true'
       shell: bash
       run: |
-        find . -name "*.py" -not -path "./.git/*" -not -path "*/__pycache__/*" -print0 \
-          | xargs -0 -r python3 -m py_compile
-    - name: pytest — testes (se existir tests/)
-      shell: bash
-      run: |
-        if [ ! -d tests ]; then
-          echo "Pasta tests/ não encontrada — nenhum teste executado."
-          echo "Crie tests/ (ex.: tests/test_app.py) para habilitar esta etapa."
-          exit 0
-        fi
-        pytest --tb=short --cov=. --cov-report=term-missing
+        mkdir -p /tmp/esteira-testes
+        RC=0
+        pytest --tb=short --color=no -p no:cacheprovider 2>&1 | tee /tmp/esteira-testes/pytest.txt || RC=$?
+        # exit 5 = nenhum teste coletado (ex.: arquivo de apoio com nome test_*.py): não é falha
+        [ "$RC" -eq 5 ] && RC=0
+        exit "$RC"

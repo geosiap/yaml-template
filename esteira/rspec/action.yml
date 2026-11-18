@@ -1,5 +1,5 @@
 name: 'Esteira — RSpec'
-description: 'Syntax check Ruby (um arquivo por chamada) + RSpec, se existir spec/.'
+description: 'RSpec, só se existirem specs (*_spec.rb). Sem specs a etapa fica adormecida e passa.'
 inputs:
   ruby-version:
     description: 'Versão exata do Gemfile (ex.: 3.1.0)'
@@ -19,31 +19,39 @@ inputs:
     description: 'Comando que autentica o bundle — espelhe o Dockerfile do projeto ($LIB_TOKEN disponível)'
     required: false
     default: 'bundle config set --global rubygems.pkg.github.com "$LIB_TOKEN"'
+outputs:
+  ran:
+    description: "'true' se havia specs e o RSpec rodou"
+    value: ${{ steps.detect.outputs.has }}
 runs:
   using: composite
   steps:
-    - name: Instalar Ruby ${{ inputs.ruby-version }}
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: ${{ inputs.ruby-version }}
-    - name: Ruby Syntax Check (ruby -c só checa o 1º argumento — um arquivo por chamada)
+    - name: Procurar specs
+      id: detect
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        find . -name "*.rb" -not -path "*/vendor/*" -print0 \
-          | xargs -0 -n1 -P4 ruby -c > /dev/null
-    - name: RSpec — testes (se existir spec/)
+        if [ -d spec ] && [ -n "$(find spec -name '*_spec.rb' -print -quit)" ]; then
+          echo "has=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has=false" >> "$GITHUB_OUTPUT"
+          MSG="⚪ **RSpec:** nenhum spec em \`${{ inputs.working-directory }}/spec\` — etapa adormecida (passa a rodar sozinha quando existir um \`*_spec.rb\`)."
+          echo "$MSG" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+    - name: Instalar Ruby ${{ inputs.ruby-version }}
+      if: steps.detect.outputs.has == 'true'
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+    - name: RSpec
+      if: steps.detect.outputs.has == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         LIB_TOKEN: ${{ inputs.lib-token }}
       run: |
-        if [ ! -d spec ]; then
-          echo "Pasta spec/ não encontrada — nenhum teste executado."
-          echo "Adicione rspec-rails ao Gemfile e crie spec/ para habilitar esta etapa."
-          exit 0
-        fi
         sudo apt-get update -qq && sudo apt-get install -y ${{ inputs.system-deps }}
         ${{ inputs.bundle-auth }}
         bundle install --jobs 4
-        bundle exec rspec --format documentation
+        mkdir -p /tmp/esteira-testes
+        bundle exec rspec --no-color --format documentation | tee /tmp/esteira-testes/rspec.txt

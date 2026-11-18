@@ -1,5 +1,5 @@
 name: 'Esteira — PHPUnit'
-description: 'Syntax check PHP (um arquivo por chamada) + PHPUnit. Laravel usa o phpunit do composer; legado usa o da tool.'
+description: 'PHPUnit, só se existirem testes (tests/**/*Test.php). Sem testes a etapa fica adormecida e passa. Laravel usa o phpunit do composer; legado usa o da tool.'
 inputs:
   php-version:
     description: 'Versão de PHP da APLICAÇÃO (a do Dockerfile)'
@@ -15,37 +15,46 @@ inputs:
     description: 'Só sem Laravel (ex.: 8.5 para PHP 7.2)'
     required: false
     default: '8.5'
-  lint-excludes:
-    description: 'Diretórios fora do php -l, separados por espaço'
-    required: false
-    default: 'vendor'
+outputs:
+  ran:
+    description: "'true' se havia testes e o PHPUnit rodou"
+    value: ${{ steps.detect.outputs.has }}
 runs:
   using: composite
   steps:
+    - name: Procurar testes
+      id: detect
+      shell: bash
+      run: |
+        if [ -n "$(find tests test -name '*Test.php' -print -quit 2>/dev/null)" ]; then
+          echo "has=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has=false" >> "$GITHUB_OUTPUT"
+          MSG="⚪ **PHPUnit:** nenhum \`*Test.php\` em \`tests/\` — etapa adormecida (passa a rodar sozinha quando existir um teste)."
+          echo "$MSG" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
     - name: Instalar PHP ${{ inputs.php-version }}
+      if: steps.detect.outputs.has == 'true'
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php-version }}
         extensions: ${{ inputs.extensions }}
         tools: ${{ inputs.laravel != 'true' && format('phpunit:{0}', inputs.phpunit-version) || '' }}
-        coverage: pcov
+        coverage: none
     - name: Instalar dependências e preparar Laravel
-      if: ${{ inputs.laravel == 'true' }}
+      if: steps.detect.outputs.has == 'true' && inputs.laravel == 'true'
       shell: bash
       run: |
         composer install --prefer-dist --no-interaction --no-progress
-        cp .env.example .env
+        [ -f .env.example ] && cp .env.example .env
         php artisan key:generate
-    - name: PHP Syntax Check (php < 8.3 só checa o 1º argumento — um arquivo por chamada)
+    - name: PHPUnit
+      if: steps.detect.outputs.has == 'true'
       shell: bash
       run: |
-        EX=(); for e in ${{ inputs.lint-excludes }}; do EX+=(-not -path "./$e/*"); done
-        find . -name "*.php" "${EX[@]}" -print0 | xargs -0 -n1 -P4 php -l > /dev/null
-    - name: PHPUnit — testes
-      shell: bash
-      run: |
-        if [ "${{ inputs.laravel }}" = "true" ]; then
-          vendor/bin/phpunit --testdox --coverage-text
-        else
-          phpunit --testdox --coverage-text
-        fi
+        mkdir -p /tmp/esteira-testes
+        BIN=phpunit; [ "${{ inputs.laravel }}" = "true" ] && BIN=vendor/bin/phpunit
+        ARGS=(--testdox --colors=never)
+        # sem phpunit.xml, aponta direto para a pasta de testes
+        [ -f phpunit.xml ] || [ -f phpunit.xml.dist ] || ARGS+=(tests)
+        "$BIN" "${ARGS[@]}" | tee /tmp/esteira-testes/phpunit.txt

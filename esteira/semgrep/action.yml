@@ -1,5 +1,5 @@
 name: 'Esteira — Semgrep'
-description: 'SAST com Semgrep (--error: falha se houver achado); artefato semgrep-report (JSON).'
+description: 'SAST com Semgrep (--error: falha se houver achado); artefato sast-semgrep-report (JSON).'
 inputs:
   configs:
     description: 'Packs separados por espaço (ex.: "p/php p/owasp-top-ten")'
@@ -24,10 +24,10 @@ runs:
         echo "Total de achados: $(jq '.results | length' /tmp/semgrep-report.json 2>/dev/null || echo '?')"
         exit $RC
 
-    - name: Upload semgrep-report
+    - name: Upload sast-semgrep-report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: semgrep-report
+        name: sast-semgrep-report
         path: /tmp/semgrep-report.json
         if-no-files-found: ignore

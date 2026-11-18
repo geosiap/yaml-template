@@ -1,5 +1,5 @@
-name: 'Trivy IaC Scan'
-description: 'Scan de misconfigurações em Dockerfiles e docker-compose (modo config/IaC)'
+name: 'Trivy — dependências e Dockerfile'
+description: 'trivy fs: dependências vulneráveis (lockfiles) + misconfiguração de Dockerfile/compose. Só reporta o que tem correção disponível. Artefato trivy-report (JSON).'
 
 inputs:
   severity:
@@ -26,19 +26,26 @@ runs:
         sudo apt-get update -qq
         sudo apt-get install -y trivy
 
-    - name: Trivy — scan de misconfigurações (IaC/Dockerfile)
+    - name: Trivy — dependências (vuln) + Dockerfile/compose (misconfig)
       shell: bash
       run: |
-        trivy config \
+        RC=0
+        trivy fs \
+          --scanners vuln,misconfig \
           --severity "${{ inputs.severity }}" \
+          --ignore-unfixed \
           --exit-code 1 \
-          --format table \
-          --output /tmp/trivy-iac-report.txt \
-          "${{ inputs.scan-path }}"
+          --format json \
+          --output /tmp/trivy-report.json \
+          "${{ inputs.scan-path }}" || RC=$?
+        # versão legível no log do job
+        trivy convert --format table --severity "${{ inputs.severity }}" /tmp/trivy-report.json || true
+        exit $RC
 
-    - name: Upload Trivy IaC Report
+    - name: Upload trivy-report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: trivy-iac-report
-        path: /tmp/trivy-iac-report.txt
+        name: trivy-report
+        path: /tmp/trivy-report.json
+        if-no-files-found: ignore

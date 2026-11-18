@@ -8,7 +8,11 @@ inputs:
   severity:
     description: 'Severidades a reportar (separadas por vírgula)'
     required: false
-    default: 'CRITICAL,HIGH,MEDIUM'
+    default: 'CRITICAL,HIGH'
+  ignore-unfixed:
+    description: "'true': só reporta CVE que já tem correção disponível"
+    required: false
+    default: 'true'
   docker-login:
     description: 'Usuário do Docker registry'
     required: true
@@ -46,6 +50,7 @@ runs:
       run: |
         trivy image \
           --severity "${{ inputs.severity }}" \
+          ${{ inputs.ignore-unfixed == 'true' && '--ignore-unfixed' || '' }} \
           --exit-code 1 \
           --format table \
           --output /tmp/trivy-image-report.txt \

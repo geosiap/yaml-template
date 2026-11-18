@@ -1,64 +1,31 @@
-name: 'Flake8 PEP 8 Style Check'
-description: 'Verificação de estilo de código Python (PEP 8) com Flake8'
-
+name: 'Esteira — Flake8 (só bugs)'
+description: 'Pyflakes via flake8, só o que é bug: nome não definido (F82x), erro de format string (F5xx), comparação/assert sempre verdadeiro (F6xx), sintaxe (F7xx). Sem estilo e sem import não usado. Artefato sast-flake8-report.'
 inputs:
   python-version:
-    description: 'Versão do Python'
     required: false
     default: '3.11'
-  max-line-length:
-    description: 'Comprimento máximo de linha'
-    required: false
-    default: '120'
   exclude:
-    description: 'Caminhos a excluir (separados por vírgula)'
     required: false
-    default: '.git,__pycache__,*.egg-info,.env'
-  path:
-    description: 'Caminho a verificar'
-    required: false
-    default: '.'
-
+    default: '.git,__pycache__,venv,.venv,node_modules'
 runs:
   using: composite
   steps:
     - name: Instalar Python ${{ inputs.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-
-    - name: Instalar Flake8
-      shell: bash
-      run: pip install flake8
-
-    - name: Flake8 — verifica estilo PEP 8
+    - name: Flake8 (F5, F6, F7, F82)
       shell: bash
       run: |
-        echo "Executando Flake8 (PEP 8 style check)..."
-        flake8 \
-          --max-line-length=${{ inputs.max-line-length }} \
-          --exclude=${{ inputs.exclude }} \
-          --format=default \
-          --output-file=/tmp/flake8-report.txt \
-          "${{ inputs.path }}" || true
-
-        if [ -s /tmp/flake8-report.txt ]; then
-          ISSUES=$(wc -l < /tmp/flake8-report.txt)
-          echo "## PEP 8 Code Style Issues"
-          echo "Total de issues: **$ISSUES**"
-          echo ""
-          echo "**Primeiros findings:**"
-          head -20 /tmp/flake8-report.txt
-          echo ""
-          echo "Erro: Encontradas $ISSUES violações de estilo PEP 8."
-          exit 1
-        else
-          echo "Sem issues PEP 8 encontrados!"
-        fi
-
-    - name: Upload Flake8 Report
+        pip install -q flake8
+        RC=0
+        flake8 --select=F5,F6,F7,F82 --exclude="${{ inputs.exclude }}" --output-file=/tmp/flake8-report.txt . || RC=$?
+        cat /tmp/flake8-report.txt
+        exit $RC
+    - name: Upload sast-flake8-report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: flake8-report
+        name: sast-flake8-report
         path: /tmp/flake8-report.txt
+        if-no-files-found: ignore

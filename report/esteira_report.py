@@ -11,8 +11,10 @@ Para cada job que falhou no run:
      - nenhuma aberta     -> issue nova;
   4. issue nova entra no board (GitHub Project V2) na coluna configurada.
 
-Sem artefato (testes, ferramenta que quebrou antes de gerar relatório), o fingerprint
-usa os nomes dos steps que falharam, lidos da API do run.
+Sem artefato (ferramenta que quebrou antes de gerar relatório), o fingerprint
+usa os nomes dos steps que falharam e as últimas linhas de erro do log, lidos da API do run.
+
+No fim escreve um resumo do run (aba Summary): uma linha por verificação, com o link da issue.
 """
 import hashlib
 import json
@@ -39,7 +41,8 @@ ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "."))
 BOARD_NUMBER = int(os.environ.get("BOARD_NUMBER", "33"))
 STATUS_COLUMN = os.environ.get("STATUS_COLUMN", "Security issues")
 ARTIFACT_MAP = json.loads(os.environ.get("ARTIFACT_MAP") or "{}")
-DEFAULT_ARTIFACT_MAP = {"trivy": "trivy-iac-report"}  # nome fixo da action trivy
+DEFAULT_ARTIFACT_MAP = {}
+JOB_NAMES = json.loads(os.environ.get("JOB_NAMES") or "{}")  # {id do job: nome exibido (name:)}
 MAX_LIST = 30
 RUN_URL = f"{SERVER}/{REPO}/actions/runs/{RUN_ID}"
 
@@ -87,82 +90,12 @@ def p_gitleaks(d):
     return {f"{f.get('RuleID')} | {f.get('File')} | {str(f.get('Commit', ''))[:12]}" for f in (d or [])}
 
 
-def p_snyk(d):
-    out = set()
-    for proj in (d if isinstance(d, list) else [d or {}]):
-        for v in proj.get("vulnerabilities", []) or []:
-            out.add(f"{v.get('id')} | {v.get('packageName')} | {proj.get('displayTargetFile', '')}")
-    return out
-
-
-def p_phpstan(d):
-    return {f"{m.get('message')} | {path}" for path, f in ((d or {}).get("files") or {}).items()
-            for m in f.get("messages", [])}
-
-
-def p_phpcs(d):
-    return {f"{m.get('source')} | {path}" for path, f in ((d or {}).get("files") or {}).items()
-            for m in f.get("messages", [])}
-
-
-def p_rubocop(d):
-    offs = [(f.get("path"), o) for f in (d or {}).get("files", []) for o in f.get("offenses", [])]
-    graves = [(p, o) for p, o in offs if o.get("severity") in ("error", "fatal")]
-    return {f"{o.get('cop_name')} | {p}" for p, o in (graves or offs)}
-
-
 def p_brakeman(d):
     return {f"{w.get('check_name')}/{w.get('warning_type')} | {w.get('file')}" for w in (d or {}).get("warnings", [])}
 
 
 def p_bandit(d):
-    return {f"{r.get('test_id')} {r.get('test_name')} | {r.get('filename')}" for r in (d or {}).get("results", [])}
-
-
-def p_pylint(d):
-    return {f"{m.get('symbol')} | {m.get('path')}" for m in (d or []) if m.get("type") in ("error", "fatal", "warning")}
-
-
-def p_hadolint(d):
-    return {f"{i.get('code')} | {i.get('file')}" for i in (d or [])}
-
-
-def p_rector(d):
-    return {f"{r} | {f.get('file')}" for f in (d or {}).get("file_diffs", []) for r in f.get("applied_rectors", []) or ["?"]}
-
-
-JSON_PARSERS = {
-    "semgrep": p_semgrep, "gitleaks": p_gitleaks, "snyk": p_snyk, "phpstan": p_phpstan,
-    "phpcs": p_phpcs, "rubocop": p_rubocop, "brakeman": p_brakeman, "bandit": p_bandit,
-    "pylint": p_pylint, "hadolint": p_hadolint, "rector": p_rector,
-}
-
-
-def p_trivy_text(text):
-    """Relatórios de tabela do trivy.
-    config (IaC): cabeçalho "<arquivo> (dockerfile)" + linhas "DS-0002 (HIGH): ..." -> "DS-0002 | arquivo";
-    image: linhas da tabela com CVE/GHSA -> "CVE-... | pacote" (linha de continuação herda o pacote)."""
-    out, pkg, target = set(), "", ""
-    for line in text.splitlines():
-        s = line.strip()
-        m = re.match(r"^(\S.*) \((\w[\w-]*)\)$", s)
-        if m:
-            target = m.group(1)
-            continue
-        m = re.match(r"^((?:AVD-)?[A-Z]{2,4}-\d{4}) \((?:LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)\):", s)
-        if m:
-            out.add(f"{m.group(1)} | {target}")
-            continue
-        ids = re.findall(r"\b(CVE-\d{4}-\d+|GHSA-[\w-]+)\b", line)
-        if not ids:
-            continue
-        cells = [c.strip() for c in re.split(r"[│|]", line)]
-        cells = [c for c in cells if c]
-        if cells and not re.match(r"^(CVE|GHSA)-", cells[0]):
-            pkg = cells[0]
-        for i in ids:
-            out.add(f"{i} | {pkg or target}")
-    return out
+    return {f"{x.get('test_id')} {x.get('test_name')} | {x.get('filename')}" for x in (d or {}).get("results", [])}
 
 
 def p_flake8_text(text):
@@ -174,21 +107,56 @@ def p_flake8_text(text):
     return out
 
 
-def p_lint_text(text):
-    """TSLint verbose ("ERROR: (regra) arquivo[l, c]: msg") e ESLint/ng lint stylish
-    (linha com o arquivo, depois "  l:c  error  msg  regra") -> "regra | arquivo"."""
-    out, current = set(), ""
+def p_trivy_json(d):
+    """trivy fs (JSON): dependências -> "CVE | pacote | lockfile"; Dockerfile/compose -> "DS-0002 | arquivo"."""
+    out = set()
+    for r in (d or {}).get("Results") or []:
+        target = r.get("Target", "")
+        for v in r.get("Vulnerabilities") or []:
+            out.add(f"{v.get('VulnerabilityID')} | {v.get('PkgName')} | {target}")
+        for m in r.get("Misconfigurations") or []:
+            if m.get("Status", "FAIL") == "FAIL":
+                out.add(f"{m.get('ID')} | {target}")
+    return out
+
+
+JSON_PARSERS = {"semgrep": p_semgrep, "gitleaks": p_gitleaks, "trivy": p_trivy_json,
+                "brakeman": p_brakeman, "bandit": p_bandit}
+
+
+def p_trivy_text(text):
+    """Tabela do trivy image: linhas com CVE/GHSA -> "CVE-... | pacote" (linha de continuação herda o pacote)."""
+    out, pkg = set(), ""
     for line in text.splitlines():
-        m = re.match(r"^(?:ERROR|WARNING): \(([\w@/-]+)\) (\S+?)\[\d+, \d+\]", line)
+        ids = re.findall(r"\b(CVE-\d{4}-\d+|GHSA-[\w-]+)\b", line)
+        if not ids:
+            continue
+        cells = [c.strip() for c in re.split(r"[│|]", line)]
+        cells = [c for c in cells if c]
+        if cells and not re.match(r"^(CVE|GHSA)-", cells[0]):
+            pkg = cells[0]
+        for i in ids:
+            out.add(f"{i} | {pkg}")
+    return out
+
+
+def p_tests_text(text):
+    """Saída dos testes -> um achado por teste que falhou (sem número de linha, sem tempo):
+    rspec "rspec ./spec/x_spec.rb:12 # descrição"; phpunit "1) Ns\\FooTest::testBar"; pytest "FAILED tests/t.py::test_x - ..."."""
+    out = set()
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r"^rspec (\S+?):\d+ # (.*)$", s)
         if m:
-            out.add(f"{m.group(1)} | {m.group(2)}")
+            out.add(f"rspec | {m.group(1)} | {m.group(2)}")
             continue
-        if re.match(r"^\S.*\.(ts|html|js)$", line.strip()) and not line.startswith(" "):
-            current = line.strip()
+        m = re.match(r"^\d+\) (\S+::\S+)", s)
+        if m:
+            out.add(f"phpunit | {m.group(1)}")
             continue
-        m = re.match(r"^\s+\d+:\d+\s+(error|warning)\s+.*?\s{2,}([\w@/-]+)\s*$", line)
-        if m and current:
-            out.add(f"{m.group(2)} | {current}")
+        m = re.match(r"^(?:FAILED|ERROR) (\S+)", s)
+        if m:
+            out.add(f"pytest | {m.group(1)}")
     return out
 
 
@@ -203,7 +171,8 @@ def p_generic_text(text):
 
 
 def findings_from_artifact(job, art_dir):
-    tool = next((t for t in JSON_PARSERS if job == t or job.startswith(t + "-")), None)
+    name = job[len("sast-"):] if job.startswith("sast-") else job  # perna do job sast: sast-<ferramenta>
+    tool = next((t for t in JSON_PARSERS if name == t or name.startswith(t + "-")), None)
     found = set()
     for f in sorted(p for p in art_dir.rglob("*") if p.is_file()):
         if f.suffix == ".json" and tool:
@@ -212,10 +181,10 @@ def findings_from_artifact(job, art_dir):
         text = f.read_text(errors="replace")
         if job.startswith("trivy"):
             found |= p_trivy_text(text)
-        elif job.startswith("flake8"):
+        elif name.startswith("flake8"):
             found |= p_flake8_text(text)
-        elif job.startswith(("lint", "eslint", "tslint")):
-            found |= p_lint_text(text) or p_generic_text(text)
+        elif job == "testes":
+            found |= p_tests_text(text)
         else:
             found |= p_generic_text(text)
     # caminho absoluto do runner (/home/runner/work/<repo>/<repo>/) não entra no achado
@@ -230,6 +199,11 @@ def run_jobs():
     for j in jobs.get("jobs", []):
         out[j["name"]] = j
         out.setdefault(j["name"].split(" / ")[-1], j)  # job de reusable workflow: "<caller> / <job>"
+    # nome exibido (name:) -> id do job; matrix: "Imagem · Trivy (backend)" -> "trivy-image (backend)"
+    for jid, disp in JOB_NAMES.items():
+        for name, info in list(out.items()):
+            if name == disp or name.startswith(disp + " ("):
+                out.setdefault(jid + name[len(disp):], info)
     return out
 
 
@@ -351,7 +325,7 @@ def handle(job, job_info, artifact, findings, source):
              f"🔁 **Reincidência** — mesmos achados no run [#{RUN_ID}]({RUN_URL}) "
              f"(branch `{REF_NAME}`, commit `{SHA[:12]}`).\n\n{table}"})
         print(f"  {job}: reincidência -> comentado em #{same['number']}")
-        return
+        return ("reincidência", same["number"], len(findings))
 
     previous = existing[0] if existing else None
     labels = ["ci-failure", label] + (["esteira:erro-novo"] if previous else [])
@@ -381,18 +355,57 @@ def handle(job, job_info, artifact, findings, source):
         print(f"    card adicionado ao board #{BOARD_NUMBER} ('{STATUS_COLUMN}')")
     except RuntimeError as e:
         print(f"    ERRO ao adicionar no board: {e}")
+    return ("nova", issue["number"], len(findings))
+
+
+def write_summary(outcomes):
+    """Resumo do run na aba Summary: uma linha por verificação."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    rows = []
+    for job, v in NEEDS.items():
+        name, result = JOB_NAMES.get(job, job), v.get("result")
+        if result == "skipped":
+            rows.append(f"| ⚪ | {name} | não se aplica a este projeto |")
+        elif result == "success":
+            if job == "testes" and (v.get("outputs") or {}).get("ran") != "true":
+                rows.append(f"| ⚪ | {name} | sem testes escritos — etapa adormecida |")
+            else:
+                rows.append(f"| ✅ | {name} | sem achados |")
+        elif result == "failure":
+            units = {u: o for u, o in outcomes.items() if o[0] == job}
+            for u in sorted(units) or [job]:
+                label = name + (f" ({u[len(job) + 1:]})" if u != job else "")
+                o = units.get(u)
+                if o is None:
+                    rows.append(f"| ❌ | {label} | falhou — erro ao registrar a issue (ver log) |")
+                    continue
+                _, kind, number, n = o
+                rows.append(f"| ❌ | {label} | {n} achado(s) — [#{number}]({SERVER}/{REPO}/issues/{number}) ({kind}) |")
+        else:
+            rows.append(f"| 🚫 | {name} | {result} |")
+    text = (f"## Esteira aprimorada — `{REF_NAME}` @ `{SHA[:7]}`\n\n| | Verificação | Resultado |\n|---|---|---|\n"
+            + "\n".join(rows) + "\n\n_A esteira não bloqueia build nem deploy: vermelho é alerta._\n")
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError as e:
+        print(f"aviso: não foi possível escrever o resumo ({e})")
 
 
 def main():
     failed = [j for j, v in NEEDS.items() if v.get("result") == "failure"]
     if not failed:
         print("Nenhuma verificação falhou — nada a registrar.")
+        write_summary({})
         return 0
     print(f"Jobs com falha: {', '.join(failed)}")
     jobs, artifacts = run_jobs(), run_artifacts()
     ensure_label("ci-failure")
     errors = 0
-    units = []  # (job lógico, info do job na API, nome do artefato)
+    outcomes = {}
+    units = []  # (job lógico, info do job na API, nome do artefato, job pai)
     for job in failed:
         art_name = ARTIFACT_MAP.get(job) or DEFAULT_ARTIFACT_MAP.get(job) or f"{job}-report"
         # job em matrix (ex.: trivy-image por imagem): jobs "<job> (<perna>)" na API + artefatos "<job>-<perna>-report"
@@ -404,10 +417,10 @@ def main():
                 info = jobs[f"{job} ({leg})"]
                 if info.get("conclusion") != "failure":
                     continue
-                units.append((f"{job}-{leg}", info, leg_art))
+                units.append((f"{job}-{leg}", info, leg_art, job))
         else:
-            units.append((job, jobs.get(job), art_name))
-    for job, info, art_name in units:
+            units.append((job, jobs.get(job), art_name, job))
+    for job, info, art_name, parent in units:
         art_dir = ARTIFACTS_DIR / art_name
         findings, source = set(), "artefato"
         if art_dir.is_dir():
@@ -419,10 +432,11 @@ def main():
             findings = ({f"step falhou: {s}" for s in steps} | {f"erro: {e}" for e in errs}) or {"job falhou (sem detalhe)"}
             source = "log do job — sem artefato legível"
         try:
-            handle(job, info, artifacts.get(art_name), findings, source)
+            outcomes[job] = (parent, *handle(job, info, artifacts.get(art_name), findings, source))
         except RuntimeError as e:
             errors += 1
             print(f"  {job}: ERRO — {e}")
+    write_summary(outcomes)
     return 1 if errors else 0
 
 
